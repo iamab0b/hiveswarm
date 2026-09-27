@@ -1,0 +1,17 @@
+# Hub daemon as a systemd user unit: ~/.config/systemd/user/hiveswarm.service
+#   systemctl --user daemon-reload && systemctl --user enable --now hiveswarm-decide hiveswarm
+#   loginctl enable-linger $USER     # keep it running when you log out
+[Unit]
+Description=Hiveswarm hub daemon
+After=network-online.target hiveswarm-decide.service
+Wants=network-online.target hiveswarm-decide.service
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.hiveswarm/env
+ExecStart=%h/.local/bin/hiveswarm-daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,80 @@
+[project]
+name = "hiveswarm"
+version = "0.1.0"
+description = "A control plane for swarms of coding agents: route tasks across Claude Code, Codex, Cursor, Gemini and local models, watch and steer every agent live, and let a lead agent run the swarm."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Sahil Mehta" }]
+keywords = ["agents", "coding-agents", "claude-code", "codex", "orchestration", "swarm", "mcp"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Build Tools",
+]
+dependencies = [
+  "httpx>=0.27",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "websockets>=12",
+  "pydantic>=2",
+  "scipy>=1.11",
+  "numpy>=1.26",
+  "textual>=0.60",
+  "mcp>=1.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-timeout>=2.3", "ruff>=0.6", "playwright>=1.45", "build>=1.2"]
+
+[project.urls]
+Homepage = "https://github.com/iamab0b/hiveswarm"
+Documentation = "https://github.com/iamab0b/hiveswarm/tree/main/docs"
+Issues = "https://github.com/iamab0b/hiveswarm/issues"
+
+[project.scripts]
+hm = "hiveswarm.cli:main"
+hiveswarm-worker = "hiveswarm.workers.remote:main"
+hiveswarm-mcp = "hiveswarm.mcp_server:main"
+hiveswarm-daemon = "hiveswarm.daemon.__main__:main"
+hiveswarm-decide = "hiveswarm.decide.__main__:main"
+
+[project.entry-points."hiveswarm.adapters"]
+claude_code = "hiveswarm.workers.adapters:claude_code"
+codex = "hiveswarm.workers.adapters:codex"
+cursor = "hiveswarm.workers.adapters:cursor"
+gemini = "hiveswarm.workers.adapters:gemini"
+antigravity = "hiveswarm.workers.adapters:antigravity"
+opencode = "hiveswarm.workers.adapters:opencode"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hiveswarm"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/hiveswarm", "README.md", "LICENSE", "config.example.toml", "worker.example.toml"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501", "E702", "E741", "B006", "B007", "B008", "B904", "UP007"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 300
+markers = ["e2e: browser tests that need Playwright and a built web app"]

@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG="${HIVESWARM_CONFIG:-${HIVESWARM_HOME:-$HOME/.hiveswarm}/config.toml}"
+
+usage() {
+  cat <<'EOF'
+hm-project — manage [projects.*] entries in Hiveswarm's config.toml
+
+  hm-project add <name> <repo_path> [--image IMAGE] [--posture POSTURE] [--templates "cmd1;cmd2"]
+  hm-project templates <name> "cmd1;cmd2"
+  hm-project wiki on <name>
+  hm-project remove <name>
+  hm-project list
+  hm-project show <name>
+
+Options for add:
+  --image      verify container image (default: python:3.12-slim)
+  --posture    redacted | full | local (default: inherits [decide].posture)
+  --templates  semicolon-separated acceptance commands shown as buttons in the TUI
+
+Examples:
+  hm-project add myapp ~/hiveswarm/repos/myapp
+  hm-project add api ~/hiveswarm/repos/api --image node:22-slim --posture local
+  hm-project templates myapp "python3 -m pytest -q;ruff check ."
+  hm-project wiki on myapp
+  hm-project remove example
+EOF
+}
+
+require_config() {
+  if [ ! -f "$CONFIG" ]; then
+    echo "error: $CONFIG not found" >&2
+    exit 1
+  fi
+}
+
+py() {
+  python3 - "$CONFIG" "$@" <<'PY'
+import re, sys, tomllib
+
+cfg_path, cmd, *args = sys.argv[1:]
+text = open(cfg_path).read()
+
+def load():
+    return tomllib.loads(text)
+
+def section_span(name):
+    header = f"[projects.{name}]"
+    m = re.search(r"^" + re.escape(header) + r"[ \t]*\n", text, re.M)
+    if not m:
+        return None
+    start = m.start()
+    nxt = re.search(r"^\[", text[m.end():], re.M)
+    end = m.end() + nxt.start() if nxt else len(text)
+    return start, end
+
+def write(new_text):
+    with open(cfg_path, "w") as f:
+        f.write(new_text)
+
+if cmd == "list":
+    projects = load().get("projects", {})
+    if not projects:
+        print("no projects configured")
+        sys.exit(0)
+    w = max(len(k) for k in projects)
+    for name, p in projects.items():
+        print(f"{name:{w}}  {p.get('repo_path','?')}  image={p.get('verify_image','-')}  posture={p.get('posture','-')}")
+
+elif cmd == "show":
+    name = args[0]
+    p = load().get("projects", {}).get(name)
+    if not p:
+        print(f"no project '{name}'", file=sys.stderr); sys.exit(1)
+    for k, v in p.items():
+        print(f"{k} = {v!r}")
+
+elif cmd == "add":
+    name, repo, image, posture = args[0], args[1], args[2], args[3]
+    templates = [t.strip() for t in (args[4] if len(args) > 4 else "").split(";") if t.strip()]
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+        print(f"invalid project name '{name}': use letters, digits, - and _", file=sys.stderr); sys.exit(1)
+    block = f"[projects.{name}]\nrepo_path = \"{repo}\"\nverify_image = \"{image}\"\n"
+    if posture:
+        block += f"posture = \"{posture}\"\n"
+    if templates:
+        import json as _json
+        block += f"acceptance_templates = {_json.dumps(templates)}\n"
+    span = section_span(name)
+    if span:
+        s, e = span
+        new = text[:s] + block + text[e:]
+        action = "updated"
+    else:
+        new = text.rstrip("\n") + "\n\n" + block
+        action = "added"
+    tomllib.loads(new)
+    write(new)
+    print(f"{action} project '{name}' -> {repo}")
+
+elif cmd == "templates":
+    name, raw = args[0], args[1]
+    templates = [t.strip() for t in raw.split(";") if t.strip()]
+    span = section_span(name)
+    if not span:
+        print(f"no project '{name}'", file=sys.stderr); sys.exit(1)
+    s, e = span
+    block = re.sub(r"^acceptance_templates\s*=.*\n", "", text[s:e], flags=re.M).rstrip("\n") + "\n"
+    if templates:
+        import json as _json
+        block += f"acceptance_templates = {_json.dumps(templates)}\n"
+    new = text[:s] + block + ("\n" if e < len(text) else "") + text[e:]
+    new = re.sub(r"\n{3,}", "\n\n", new)
+    tomllib.loads(new)
+    write(new)
+    print(f"set {len(templates)} template(s) on '{name}'")
+
+elif cmd == "remove":
+    name = args[0]
+    span = section_span(name)
+    if not span:
+        print(f"no project '{name}'", file=sys.stderr); sys.exit(1)
+    s, e = span
+    new = text[:s] + text[e:]
+    new = re.sub(r"\n{3,}", "\n\n", new)
+    tomllib.loads(new)
+    write(new)
+    print(f"removed project '{name}'")
+PY
+}
+
+wiki_on() {
+  name="$1"
+  require_config
+  repo="$(python3 - "$CONFIG" "$name" <<'PY'
+import sys, tomllib
+cfg = tomllib.load(open(sys.argv[1], "rb"))
+print(cfg.get("projects", {}).get(sys.argv[2], {}).get("repo_path", ""))
+PY
+)"
+  if [ -z "$repo" ] || [ ! -d "$repo/.git" ]; then
+    echo "error: no repo for project '$name'" >&2
+    exit 1
+  fi
+  mkdir -p "$repo/.wiki"
+  if [ ! -f "$repo/.wiki/README.md" ]; then
+    cat > "$repo/.wiki/README.md" <<'EOF'
+# Team wiki
+
+Notes that every agent (and human) working on this repo should read first.
+Keep entries short and factual. One file per topic; `learnings.md` is the running log.
+
+- `learnings.md` — what agents learned while working here (gotchas, commands, decisions), newest at the bottom
+EOF
+  fi
+  [ -f "$repo/.wiki/learnings.md" ] || printf '# Learnings
+
+Append a few lines under a dated heading when you finish a task.
+' > "$repo/.wiki/learnings.md"
+  block='## Hiveswarm wiki
+Read `.wiki/README.md` and the notes that concern your task before starting. When you finish, append the non-obvious things you learned (gotchas, commands, decisions) as a few lines under a dated heading in `.wiki/learnings.md`.'
+  for f in CLAUDE.md AGENTS.md; do
+    if ! grep -q "## Hiveswarm wiki" "$repo/$f" 2>/dev/null; then
+      printf '
+%s
+' "$block" >> "$repo/$f"
+    fi
+  done
+  git -C "$repo" add .wiki CLAUDE.md AGENTS.md >/dev/null 2>&1 || true
+  git -C "$repo" -c user.name=hiveswarm -c user.email=hiveswarm@localhost commit -q -m "hiveswarm: enable team wiki" >/dev/null 2>&1 || true
+  echo "wiki enabled for '$name' at $repo/.wiki (committed to the repo's current branch)"
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  wiki)
+    [ "${2:-}" = "on" ] && [ -n "${3:-}" ] || { usage; exit 1; }
+    wiki_on "$3"
+    ;;
+  add)
+    shift
+    [ $# -ge 2 ] || { usage; exit 1; }
+    name="$1"; repo="$2"; shift 2
+    image="python:3.12-slim"; posture=""; templates=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --image) image="$2"; shift 2;;
+        --posture) posture="$2"; shift 2;;
+        --templates) templates="$2"; shift 2;;
+        *) echo "unknown option $1" >&2; usage; exit 1;;
+      esac
+    done
+    require_config
+    if [ ! -d "$repo/.git" ]; then
+      echo "warning: $repo is not a git repository (workers need one to branch from)" >&2
+    fi
+    case "$posture" in ""|redacted|full|local|jev|jev_redacted) ;; *) echo "invalid posture '$posture'" >&2; exit 1;; esac
+    py add "$name" "$repo" "$image" "$posture" "$templates"
+    ;;
+  templates)
+    shift; [ $# -eq 2 ] || { usage; exit 1; }
+    require_config
+    py templates "$1" "$2"
+    ;;
+  remove)
+    shift; [ $# -eq 1 ] || { usage; exit 1; }
+    require_config
+    py remove "$1"
+    ;;
+  list)
+    require_config
+    py list
+    ;;
+  show)
+    shift; [ $# -eq 1 ] || { usage; exit 1; }
+    require_config
+    py show "$1"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown command: $cmd" >&2; usage; exit 1;;
+esac

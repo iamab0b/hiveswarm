@@ -1,0 +1,94 @@
+# Hiveswarm hub configuration — a fully commented example for a two-machine setup.
+# For one machine, `hm init` writes a smaller version of this file for you; see docs/config.md for every key.
+#
+# Copy to ~/.hiveswarm/config.toml on the hub (the machine that holds the repositories and runs the daemon).
+
+[paths]
+# Where project repositories live on the hub. Bare paths in [projects.*] must sit under this root for
+# `hm project delete --purge` to be allowed to remove them.
+projects_root = "~/hiveswarm/repos"
+# db, worktrees and logs default to ~/.hiveswarm/{db,worktrees,logs}; uncomment to move them.
+# db = "~/.hiveswarm/db/hiveswarm.db"
+# worktrees = "~/.hiveswarm/worktrees"
+# logs = "~/.hiveswarm/logs"
+
+[daemon]
+host = "0.0.0.0"            # 127.0.0.1 for a single machine; 0.0.0.0 (or your VPN address) when workers are remote
+port = 7778
+poll_seconds = 5
+lease_seconds = 1800        # a running attempt is requeued if the worker stops heartbeating for this long
+claim_seconds = 60          # an assignment the worker never picked up goes back to the queue after this
+# How remote workers reach the hub's repositories over ssh: "user@host" as in `git clone user@host:/path`.
+# Leave empty for a single machine.
+hub_ssh = "you@hub"
+
+[decide]
+# The decide service classifies tasks, sizes swarms, gates risky commands and audits standing orders.
+# backend: "openai" (any OpenAI-compatible endpoint), "local" (a model you run yourself), "jev" (hosted), or "mock".
+backend = "openai"
+fallback = "mock"           # used when the primary backend errors, so the swarm keeps moving
+host = "127.0.0.1"
+port = 9000
+url = "http://127.0.0.1:9000"
+timeout_seconds = 15
+state_budget_chars = 12000
+# What the classifier sees: "redacted" (first line of the spec + file extensions + a repo summary — safe for a
+# hosted model), "full" (the whole spec), or "local" (force the local backend for this project).
+posture = "redacted"
+
+[decide.openai]
+# Base URL of an OpenAI-compatible chat-completions API; the key comes from OPENAI_API_KEY or HIVESWARM_DECIDE_API_KEY.
+url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+
+[decide.local]
+# A model you run yourself (llama.cpp, vLLM, Ollama, LM Studio…) speaking the OpenAI chat-completions API.
+url = "http://127.0.0.1:8080/v1/chat/completions"
+model = "coder"
+
+[decide.jev]
+# Hosted classifier the project was first built against; needs TYPESAFE_API_KEY. Optional.
+url = "https://api.typesafe.ai/v1/systemone"
+model = "jev-latest"
+
+[inference]
+# Only for the optional `local_direct` lane (a bare model on the hub that writes diffs, no agent loop).
+url = "http://127.0.0.1:8080/v1/chat/completions"
+model = "coder"
+max_tokens = 8000
+timeout_seconds = 600
+
+[workers.prime_agent]
+# Optional hub-local lane: a coding agent running in a Docker container on the hub (see deploy/hub/).
+enabled = false
+container = "prime-agent"
+worktree_mount = "/worktrees"
+timeout_seconds = 1800
+
+[workers.local_direct]
+enabled = false
+
+[verify]
+# "auto": Docker when available, otherwise the acceptance command runs directly in the worktree; or "docker" / "local".
+mode = "auto"
+network = "bridge"          # "hiveswarm-egress" if you installed deploy/hub/hiveswarm-egress-guard
+default_image = "python:3.12-slim"
+timeout_seconds = 600
+memory = "4g"
+
+[sessions]
+# Which commands in interactive sessions need a human: "pattern" (built-in rules), "model" (ask the decide service), "off".
+risk_gate = "pattern"
+auto_approve_max_risk = "low"
+
+[watch]
+stall_minutes = 3           # one tool call with no result for this long flags the lane as stalled
+silence_minutes = 6         # no output at all for this long does the same
+
+[routing]
+probation = true            # keep slow or failing agents on easy tasks until their numbers recover
+
+[projects.example]
+repo_path = "~/hiveswarm/repos/example"
+verify_image = "python:3.12-slim"
+acceptance_templates = ["python3 -m pytest -q", "python3 -m pytest -q -x"]

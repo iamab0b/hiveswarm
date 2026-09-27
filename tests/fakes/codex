@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+import sys, time, select
+args = sys.argv[1:]
+prompt = args[-1] if args else ""
+print("OpenAI Codex (fake) v0.60")
+print("> " + prompt.strip().splitlines()[0][:100])
+time.sleep(1)
+print("thinking: reviewing the worktree left by the previous agent")
+time.sleep(1)
+src = open("add.py").read()
+if "# continued" not in src:
+    open("add.py", "w").write(src + "\n# continued by codex\n")
+print("codex: appended a note to add.py")
+print("Allow command? [y/n]")
+sys.stdout.flush()
+line = sys.stdin.readline()
+print("ok, done. anything else?")
+sys.stdout.flush()
+while True:
+    r, _, _ = select.select([sys.stdin], [], [], 1)
+    if r:
+        l = sys.stdin.readline()
+        if not l or l.strip() in ("exit", "/exit"):
+            break
+        print("codex: " + l.strip()); sys.stdout.flush()

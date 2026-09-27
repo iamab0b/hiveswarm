@@ -1,0 +1,14 @@
+# Web app as a systemd user unit: ~/.config/systemd/user/hiveswarm-ui.service
+[Unit]
+Description=Hiveswarm web app
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.hiveswarm/env
+ExecStart=%h/.local/bin/hm ui --no-open
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

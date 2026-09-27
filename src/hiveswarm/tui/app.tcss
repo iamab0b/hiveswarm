@@ -1,0 +1,289 @@
+Screen {
+    layout: vertical;
+}
+
+#summary {
+    height: 1;
+    background: $surface;
+    color: $text;
+    padding: 0 1;
+}
+
+#top {
+    height: 1fr;
+}
+
+#top > ContentSwitcher {
+    height: 1fr;
+}
+
+#top > ContentSwitcher > TabPane {
+    height: 1fr;
+    padding: 0;
+}
+
+#body {
+    height: 1fr;
+}
+
+.panehead {
+    height: auto;
+    max-height: 3;
+    padding: 0 1;
+    background: $boost;
+}
+
+.livelog {
+    height: 1fr;
+    padding: 0 1;
+    background: $surface-darken-1;
+}
+
+#left {
+    width: 58%;
+    min-width: 60;
+    border-right: solid $primary-darken-2;
+}
+
+#right {
+    width: 1fr;
+}
+
+#filter {
+    dock: top;
+    height: 3;
+    border: solid $accent;
+}
+
+#tasks {
+    height: 1fr;
+}
+
+#tasks > .datatable--cursor {
+    background: $primary-darken-1;
+    color: $text;
+}
+
+#detail {
+    height: 1fr;
+}
+
+#ov {
+    padding: 1 2;
+}
+
+#loglog, #difflog {
+    height: 1fr;
+    padding: 0 1;
+    background: $surface-darken-1;
+}
+
+ModalScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#modal {
+    width: 80%;
+    max-width: 120;
+    height: auto;
+    max-height: 90%;
+    border: round $primary;
+    background: $surface;
+    padding: 1 2;
+    overflow: hidden hidden;
+}
+
+#modal.wide {
+    width: 92%;
+    max-width: 160;
+    height: 90%;
+}
+
+#modal.narrow {
+    width: 60;
+}
+
+#modal.wide-auto {
+    width: 92%;
+    max-width: 160;
+    height: auto;
+}
+
+#modal Label {
+    margin-top: 1;
+}
+
+#modal Label.title {
+    text-style: bold;
+    color: $accent;
+    margin-top: 0;
+    margin-bottom: 1;
+}
+
+#modal .dim {
+    color: $text-muted;
+    margin-top: 0;
+}
+
+#modal TextArea {
+    height: 8;
+    width: 1fr;
+    margin-bottom: 1;
+    border: solid $primary-darken-2;
+}
+
+#modal TextArea:focus {
+    border: solid $accent;
+}
+
+#modal TextArea.short {
+    height: 4;
+}
+
+#modal Input {
+    width: 1fr;
+    margin-bottom: 1;
+    border: solid $primary-darken-2;
+}
+
+#modal Input:focus {
+    border: solid $accent;
+}
+
+#modal Checkbox {
+    border: none;
+    padding: 0;
+    margin-bottom: 1;
+}
+
+#modal Select {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#modal .buttons {
+    height: auto;
+    margin-top: 1;
+}
+
+#modal .buttons Button {
+    margin-right: 2;
+    width: auto;
+    min-width: 16;
+}
+
+#modal #templates {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#modal #templates Button.tmpl {
+    min-width: 8;
+    margin-right: 1;
+}
+
+#modal .errbox {
+    background: $error 20%;
+    color: $text;
+    padding: 0 1;
+    margin-bottom: 1;
+    max-height: 8;
+}
+
+#modal Horizontal {
+    height: auto;
+}
+
+#modal Horizontal Label {
+    margin-top: 1;
+    margin-right: 1;
+}
+
+#modal Horizontal Select {
+    width: 1fr;
+    margin-bottom: 0;
+}
+
+#proposals {
+    height: 1fr;
+    border: solid $primary-darken-2;
+    padding: 0 1;
+}
+
+.proposal {
+    height: auto;
+    border-bottom: solid $primary-darken-3;
+    padding: 0 0 1 0;
+}
+
+.proposal Checkbox {
+    height: auto;
+    margin-bottom: 0;
+}
+
+#grid, #agents {
+    height: auto;
+    max-height: 30;
+}
+
+.attention {
+    height: auto;
+    max-height: 8;
+    padding: 0 1;
+    background: $warning 25%;
+    color: $text;
+    border-left: thick $warning;
+}
+
+.sessionbody {
+    height: 1fr;
+}
+
+.sessionlog {
+    width: 50%;
+    min-width: 40;
+    border-right: solid $primary-darken-2;
+}
+
+.termcol {
+    width: 1fr;
+    height: 1fr;
+}
+
+.terminal {
+    height: 1fr;
+    padding: 0 1;
+    background: #101010;
+    color: #d0d0d0;
+    overflow: hidden hidden;
+}
+
+.sessioninput {
+    dock: bottom;
+    height: 3;
+    border: solid $primary-darken-2;
+}
+
+.sessioninput:focus {
+    border: solid $accent;
+}
+
+#inboxtable {
+    height: 1fr;
+}
+
+#inboxtable > .datatable--cursor {
+    background: $primary-darken-1;
+    color: $text;
+}
+
+#modal Input.tiny {
+    width: 8;
+    margin-bottom: 0;
+}
+
+#modal #sessopts {
+    height: auto;
+    margin-bottom: 1;
+}

@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+work="$(realpath -m "${HM_WORK_ROOT:-$HOME/hiveswarm-work}")"
+here="$(pwd -P)"
+rel="${here#"$work"/worktrees/}"
+if [ "$rel" = "$here" ] || [ -z "$rel" ]; then
+  echo "hm-sandbox: refusing to run outside $work/worktrees (cwd: $here)" >&2
+  exit 126
+fi
+task="${rel%%/*}"
+taskdir="$work/worktrees/$task"
+mkdir -p "$work/.cache"
+
+if ! command -v bwrap >/dev/null 2>&1; then
+  echo "hm-sandbox: bwrap not installed (sudo apt install -y bubblewrap)" >&2
+  exit 126
+fi
+
+args=(--unshare-pid --unshare-ipc --die-with-parent)
+args+=(--proc /proc --dev /dev --tmpfs /tmp --tmpfs /var/tmp)
+args+=(--ro-bind /usr /usr --ro-bind /etc /etc --ro-bind-try /opt /opt --ro-bind-try /sys /sys)
+
+for d in /bin /sbin /lib /lib32 /lib64 /libx32; do
+  if [ -L "$d" ]; then
+    args+=(--symlink "$(readlink "$d")" "$d")
+  elif [ -d "$d" ]; then
+    args+=(--ro-bind "$d" "$d")
+  fi
+done
+
+rc="$(realpath /etc/resolv.conf 2>/dev/null || true)"
+if [ -n "$rc" ] && [ "$rc" != "/etc/resolv.conf" ] && [ -f "$rc" ]; then
+  args+=(--ro-bind "$rc" "$rc")
+fi
+
+args+=(--ro-bind "$HOME" "$HOME")
+
+for s in .ssh .gnupg .aws .azure .kube .docker .config/gh .claude; do
+  if [ -d "$HOME/$s" ]; then
+    args+=(--tmpfs "$HOME/$s")
+  fi
+done
+args+=(--bind-try "$HOME/.claude/.credentials.json" "$HOME/.claude/.credentials.json")
+for f in .git-credentials .netrc; do
+  if [ -f "$HOME/$f" ]; then
+    args+=(--ro-bind /dev/null "$HOME/$f")
+  fi
+done
+
+for s in .claude-worker .codex .cursor .config/cursor .gemini .antigravity .config/Antigravity .config/antigravity \
+         .local/share/opencode .config/opencode .local/state/opencode; do
+  if [ -d "$HOME/$s" ]; then
+    args+=(--bind "$HOME/$s" "$HOME/$s")
+  fi
+done
+
+args+=(--bind "$work/.cache" "$work/.cache")
+args+=(--bind "$taskdir" "$taskdir")
+if [ -e "$taskdir/.git" ]; then
+  args+=(--ro-bind "$taskdir/.git" "$taskdir/.git")
+fi
+args+=(--chdir "$here")
+
+mkdir -p "$work/.cache/pyuser/bin" "$work/.cache/npm-global/bin" "$work/.cache/cargo" "$work/.cache/go"
+if command -v python3 >/dev/null 2>&1; then
+  orig_site="$(python3 -c 'import site; print(site.getusersitepackages())' 2>/dev/null || true)"
+  new_site="$(PYTHONUSERBASE="$work/.cache/pyuser" python3 -c 'import site; print(site.getusersitepackages())' 2>/dev/null || true)"
+  if [ -n "$orig_site" ] && [ -n "$new_site" ] && [ -d "$orig_site" ]; then
+    mkdir -p "$new_site"
+    [ -f "$new_site/zz-hiveswarm-home-site.pth" ] || echo "$orig_site" > "$new_site/zz-hiveswarm-home-site.pth"
+  fi
+fi
+exec env -u HIVESWARM_TOKEN -u HIVESWARM_DECIDE_API_KEY -u TYPESAFE_API_KEY -u OPENAI_API_KEY \
+  XDG_CACHE_HOME="$work/.cache" \
+  npm_config_cache="$work/.cache/npm" \
+  npm_config_prefix="$work/.cache/npm-global" \
+  PYTHONUSERBASE="$work/.cache/pyuser" \
+  CARGO_HOME="$work/.cache/cargo" \
+  GOPATH="$work/.cache/go" \
+  GOMODCACHE="$work/.cache/go/mod" \
+  GRADLE_USER_HOME="$work/.cache/gradle" \
+  PATH="$work/.cache/pyuser/bin:$work/.cache/npm-global/bin:$PATH" \
+  DISABLE_AUTOUPDATER=1 \
+  HM_SANDBOXED=1 \
+  bwrap "${args[@]}" -- "$@"

@@ -1,0 +1,13 @@
+[Unit]
+Description=Hiveswarm egress guard (agent containers get internet, not your LAN or tailnet)
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/hiveswarm-egress-guard
+
+[Install]
+WantedBy=multi-user.target docker.service

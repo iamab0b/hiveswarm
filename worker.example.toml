@@ -1,0 +1,49 @@
+# Hiveswarm worker configuration — the machine where the coding-agent CLIs are installed.
+# Copy to ~/.hiveswarm/worker.toml. `hm init` writes a single-machine version of this for you.
+
+daemon_url = "http://hub:7778"      # the hub daemon; http://127.0.0.1:7778 on a single machine
+# token = ""                        # or set HIVESWARM_TOKEN (hm init puts it in ~/.hiveswarm/env)
+hub_ssh = "you@hub"                 # how this machine clones the hub's repositories; empty on a single machine
+root = "~/.hiveswarm/work"          # mirrors and worktrees the agents work in
+local_projects = "~/hiveswarm"      # a fast-forwarded copy of every project's branch; "" turns this off
+# sandbox_wrapper = "~/.local/bin/hm-sandbox"   # wrap agent processes (bwrap/firejail…); see scripts/hm-sandbox
+poll_seconds = 5
+keep_worktrees = false
+hook_port = 7791                    # Claude Code hooks call back here; 0 picks a free port
+
+[agents.claude_code]
+adapter = "claude_code"
+config_dir = "~/.claude-worker"     # a separate Claude config so swarm sessions never touch your own
+oauth_token_file = "~/.hiveswarm/claude-token"   # written by `hm login claude`
+dangerously_skip_permissions = true # headless tasks; interactive sessions use their own permission mode
+concurrency = 2
+timeout = 1800
+
+[agents.codex]
+adapter = "codex"
+sandbox = "workspace-write"         # or "danger-full-access"
+concurrency = 1
+timeout = 1800
+
+[agents.cursor]
+adapter = "cursor"
+force = true
+concurrency = 1
+timeout = 1800
+
+[agents.gemini]
+adapter = "gemini"
+concurrency = 1
+timeout = 1800
+
+[agents.antigravity]
+adapter = "antigravity"
+dangerously_skip_permissions = true
+pty = true
+concurrency = 1
+timeout = 1800
+enabled = false
+
+[agents.opencode]
+adapter = "opencode"
+enabled = false

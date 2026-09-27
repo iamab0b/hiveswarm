@@ -1,0 +1,17 @@
+# Worker as a systemd user unit on the machine with the agent CLIs: ~/.config/systemd/user/hiveswarm-worker.service
+# Interactive sessions need tmux and a login environment where the agents are signed in; run `hm login claude` first.
+[Unit]
+Description=Hiveswarm worker (runs the coding agents)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.hiveswarm/env
+ExecStart=%h/.local/bin/hiveswarm-worker
+Restart=on-failure
+RestartSec=10
+KillMode=process
+
+[Install]
+WantedBy=default.target

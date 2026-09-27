@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+"""Interactive fake of the Claude Code CLI for tmux-session tests.
+
+Understands --name, --permission-mode, --settings <json>, --model, positional prompt.
+Runs the configured hooks the way Claude Code does (JSON on stdin, JSON on stdout),
+writes a JSONL transcript, and blocks on PermissionRequest / AskUserQuestion answers.
+"""
+import json, os, sys, time, uuid, subprocess, re, select
+
+args = sys.argv[1:]
+opts = {"name": None, "permission-mode": "default", "settings": "{}", "model": None, "resume": None, "mcp-config": None,
+        "output-format": None}
+prompt = ""
+headless = False
+i = 0
+while i < len(args):
+    a = args[i]
+    if a.startswith("--") and a[2:] in opts:
+        opts[a[2:]] = args[i + 1]; i += 2; continue
+    if a in ("--continue", "--verbose", "--dangerously-skip-permissions"):
+        i += 1; continue
+    if a == "-p":
+        headless = True; prompt = args[i + 1]; i += 2; continue
+    prompt = a; i += 1
+
+settings = json.loads(opts["settings"] or "{}")
+hooks = settings.get("hooks", {})
+session_id = opts["resume"] or str(uuid.uuid4())
+cfg_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+slug = re.sub(r"[^A-Za-z0-9]", "-", os.getcwd())
+tdir = os.path.join(cfg_dir, "projects", slug)
+os.makedirs(tdir, exist_ok=True)
+transcript = os.path.join(tdir, f"{session_id}.jsonl")
+step = float(os.environ.get("FAKE_STEP", "0.8"))
+
+
+def say(text):
+    print(text, flush=True)
+
+
+def tlog(obj):
+    obj.setdefault("sessionId", session_id)
+    obj.setdefault("timestamp", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    with open(transcript, "a") as f:
+        f.write(json.dumps(obj) + "\n")
+
+
+def hook(event, payload, matcher=None):
+    groups = hooks.get(event) or []
+    payload = {"session_id": session_id, "transcript_path": transcript, "cwd": os.getcwd(),
+               "permission_mode": opts["permission-mode"], "hook_event_name": event, **payload}
+    out = None
+    for g in groups:
+        m = g.get("matcher")
+        if m and matcher and m != matcher:
+            continue
+        for h in g.get("hooks", []):
+            if h.get("type") != "command":
+                continue
+            r = subprocess.run(h["command"], shell=True, input=json.dumps(payload), capture_output=True, text=True,
+                               timeout=h.get("timeout", 600))
+            if r.stdout.strip():
+                try:
+                    out = json.loads(r.stdout)
+                except Exception:
+                    out = None
+    return out
+
+
+def permission(tool, tool_input):
+    say(f"\n  {tool}({json.dumps(tool_input)[:80]})")
+    say("  Do you want to proceed?\n  ❯ 1. Yes\n    2. Yes, and don't ask again\n    3. No, and tell Claude what to do differently")
+    out = hook("PermissionRequest", {"tool_name": tool, "tool_input": tool_input})
+    dec = ((out or {}).get("hookSpecificOutput") or {}).get("decision") or {}
+    if dec.get("behavior") == "allow":
+        say("  ✔ allowed (via hook)")
+        return True, None
+    if dec.get("behavior") == "deny":
+        say(f"  ✘ denied: {dec.get('message', '')}")
+        return False, dec.get("message")
+    say("  (no hook decision; waiting for keys)")
+    line = sys.stdin.readline().strip()
+    return line.startswith("1") or line.lower().startswith("y"), None
+
+
+def ask(question, options, header="Choice"):
+    tool_input = {"questions": [{"question": question, "header": header, "multiSelect": False,
+                                 "options": [{"label": o, "description": o} for o in options]}]}
+    say(f"\n  ? {question}")
+    for n, o in enumerate(options, 1):
+        say(f"    {n}. {o}")
+    say(f"    {len(options) + 1}. Type my own answer")
+    out = hook("PreToolUse", {"tool_name": "AskUserQuestion", "tool_input": tool_input}, matcher="AskUserQuestion")
+    hso = (out or {}).get("hookSpecificOutput") or {}
+    if hso.get("permissionDecision") == "deny":
+        reason = hso.get("permissionDecisionReason", "")
+        m = re.search(r"answered via Hiveswarm: (.*?)\. Continue", reason)
+        ans = m.group(1) if m else reason
+        say(f"  → answer from hook: {ans}")
+        tlog({"type": "user", "message": {"role": "user", "content": f"[AskUserQuestion answered] {ans}"}})
+        return ans
+    say("  (no hook answer; waiting for keys)")
+    line = sys.stdin.readline().strip()
+    try:
+        idx = int(line)
+        if idx <= len(options):
+            return options[idx - 1]
+    except ValueError:
+        pass
+    return sys.stdin.readline().strip()
+
+
+def assistant(text=None, tool=None, tool_input=None):
+    content = []
+    if text:
+        content.append({"type": "text", "text": text})
+        say(f"\n● {text}")
+    if tool:
+        content.append({"type": "tool_use", "id": "toolu_" + uuid.uuid4().hex[:8], "name": tool, "input": tool_input or {}})
+        LAST_TOOL["name"], LAST_TOOL["input"] = tool, tool_input or {}
+        say(f"  ⏺ {tool}({json.dumps(tool_input)[:90]})")
+    tlog({"type": "assistant", "uuid": uuid.uuid4().hex, "message": {"role": "assistant", "model": "claude-sonnet-5", "content": content}})
+    time.sleep(step)
+
+
+LAST_TOOL = {"name": "Bash", "input": {}}
+
+
+def tool_result(text):
+    tlog({"type": "user", "uuid": uuid.uuid4().hex, "message": {"role": "user", "content": [{"type": "tool_result", "content": text}]}})
+    say(f"  ⎿ {text.splitlines()[0][:100] if text else ''}")
+    out = hook("PostToolUse", {"tool_name": LAST_TOOL["name"], "tool_input": LAST_TOOL["input"], "tool_response": {"output": text[:200]}})
+    ctx = ((out or {}).get("hookSpecificOutput") or {}).get("additionalContext")
+    if ctx:
+        say(f"  ⓘ {ctx[:160]}")
+        tlog({"type": "system", "subtype": "hook_context", "content": ctx})
+        assistant(f"Noted the standing order; my recent steps comply. ({ctx[:60]}…)")
+    time.sleep(step / 2)
+
+
+def user(text):
+    tlog({"type": "user", "uuid": uuid.uuid4().hex, "message": {"role": "user", "content": text}})
+    out = hook("UserPromptSubmit", {"prompt": text})
+    ctx = ((out or {}).get("hookSpecificOutput") or {}).get("additionalContext")
+    if ctx:
+        say(f"  ⓘ {ctx.splitlines()[0][:120]}")
+
+
+def edit_file(what):
+    src = open("add.py").read()
+    if what.lower().startswith("add subtract"):
+        src += "\n\ndef subtract(a, b):\n    return a - b\n"
+    elif what.lower().startswith("add docstring"):
+        src = src.replace("def add(a, b):\n", 'def add(a, b):\n    """Return the sum of a and b."""\n', 1)
+    else:
+        src = src.replace("return a - b", "return a + b")
+    open("add.py", "w").write(src)
+
+
+if headless:
+    def jout(obj):
+        print(json.dumps(obj), flush=True); time.sleep(step / 2)
+    def jhook_ctx(out):
+        ctx = ((out or {}).get("hookSpecificOutput") or {}).get("additionalContext")
+        if ctx:
+            jout({"type": "assistant", "message": {"content": [{"type": "text", "text": f"[hook context] {ctx[:200]}"}]}})
+    def hedit():
+        src = open("add.py").read()
+        doc = 'def add(a, b):\n    """Return the sum of a and b."""\n'
+        new = src.replace("def add(a, b):\n", doc, 1) if '"""' not in src else src + "\n# headless pass\n"
+        open("add.py", "w").write(new)
+    jout({"type": "system", "subtype": "init", "model": "claude-sonnet-5"})
+    jhook_ctx(hook("UserPromptSubmit", {"prompt": prompt}))
+    if not os.path.exists("add.py"):
+        jout({"type": "assistant", "message": {"content": [{"type": "text", "text": "OK"}]}})
+        print(json.dumps({"type": "result", "subtype": "success", "num_turns": 1, "duration_ms": 300, "total_cost_usd": 0.001,
+                          "usage": {"input_tokens": 20, "output_tokens": 2}, "result": "OK"}), flush=True)
+        sys.exit(0)
+    steps = [("Read", {"file_path": os.getcwd() + "/add.py"}, open("add.py").read()),
+             ("Edit", {"file_path": os.getcwd() + "/add.py", "old_string": "x", "new_string": "y"}, "The file has been updated."),
+             ("Bash", {"command": "python3 -m pytest -q"}, "2 passed in 0.02s")]
+    for tool, tin, res in steps:
+        jout({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": tool, "input": tin}]}})
+        if tool == "Edit":
+            hedit()
+        jout({"type": "user", "message": {"content": [{"type": "tool_result", "content": res}]}})
+        jhook_ctx(hook("PostToolUse", {"tool_name": tool, "tool_input": tin, "tool_response": {"output": res[:200]}}))
+    jout({"type": "assistant", "message": {"content": [{"type": "text", "text": "Done. Tests pass."}]}})
+    print(json.dumps({"type": "result", "subtype": "success", "num_turns": 4, "duration_ms": 3000, "total_cost_usd": 0.01,
+                      "usage": {"input_tokens": 900, "output_tokens": 220}, "result": "Done."}), flush=True)
+    sys.exit(0)
+
+say(f"╭─ Claude Code (fake) · {opts['name'] or ('resumed ' + session_id[:8])} · mode={opts['permission-mode']} ─╮")
+hook("SessionStart", {"source": "startup"})
+say(f"> {prompt.strip().splitlines()[0][:100]}")
+user(prompt)
+
+if opts["mcp-config"]:
+    import asyncio
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    cfg = json.loads(opts["mcp-config"])["mcpServers"]["hiveswarm"]
+    say(f"  (lead) MCP server: {cfg['command']}")
+
+    async def lead():
+        params = StdioServerParameters(command=cfg["command"], args=cfg.get("args", []), env={**os.environ, **cfg.get("env", {})})
+        async with stdio_client(params) as (r, w):
+            async with ClientSession(r, w) as s:
+                await s.initialize()
+                def text(res):
+                    return "\n".join(c.text for c in res.content if getattr(c, "text", None))
+
+                async def handle(request):
+                    if "Request:\n" in request:
+                        request = request.split("Request:\n", 1)[1].split("\n\nHow to work:", 1)[0]
+                    assistant("Let me size this with hm_advise.", "mcp__hiveswarm__hm_status", {})
+                    tool_result(text(await s.call_tool("hm_status", {}))[:160])
+                    short_req = request.strip().splitlines()[0][:70]
+                    planned = [{"spec": f"{short_req} — implement it in add.py"},
+                               {"spec": f"{short_req} — cover it in test_add.py"}]
+                    adv = json.loads(text(await s.call_tool("hm_advise", {"project": "demo", "tasks": planned})))
+                    tool_result(json.dumps(adv)[:300])
+                    picks = [(t["agent"] or "claude_code", t["mode"]) for t in adv["tasks"]]
+                    shape = ", ".join(f"{p[1]} on {p[0]}" for p in picks)
+                    assistant(f"Swarm plan: {len(planned)} tasks ({shape}); {adv['summary']}")
+                    q = ask("Ship it as one wave, or wait for your review after the first task?", ["One wave, go", "Pause after task 1"], header="Plan")
+                    tasks = [{"spec": planned[i]["spec"], "acceptance": "python3 -c 'import add'", "agent": picks[i][0]} for i in range(len(planned))]
+                    if q.startswith("Pause"):
+                        tasks = tasks[:1]
+                    res = json.loads(text(await s.call_tool("hm_add_tasks", {"project": "demo", "tasks": tasks})))
+                    assistant(f"Dispatched {res['count']} task(s): {', '.join(i[:8] for i in res['ids'])}", "mcp__hiveswarm__hm_wait", {"task_ids": res["ids"]})
+                    w1 = json.loads(text(await s.call_tool("hm_wait", {"task_ids": res["ids"], "timeout_seconds": 120})))
+                    tool_result(json.dumps(w1)[:300])
+                    merged = []
+                    for tid, st in w1["tasks"].items():
+                        if st["state"] == "done":
+                            await s.call_tool("hm_diff", {"task_id": tid})
+                            m = json.loads(text(await s.call_tool("hm_merge", {"task_id": tid})))
+                            if m.get("ok"):
+                                merged.append(tid[:8])
+                    assistant(f"Report: merged {len(merged)} of {len(res['ids'])} ({', '.join(merged) or 'none'}). Anything else?")
+
+                await handle(prompt)
+                hook("Stop", {"stop_hook_active": False})
+                say("\n> ")
+                while True:
+                    line = sys.stdin.readline()
+                    if not line:
+                        break
+                    msg = line.strip()
+                    if not msg:
+                        continue
+                    user(msg)
+                    if msg.lower() in ("exit", "/exit"):
+                        break
+                    await handle(msg)
+                    hook("Stop", {"stop_hook_active": False})
+                    say("\n> ")
+    asyncio.run(lead())
+    hook("SessionEnd", {"reason": "prompt_input_exit"})
+    say("bye")
+    sys.exit(0)
+
+assistant("Let me look at the code first.", "Read", {"file_path": os.path.join(os.getcwd(), "add.py")})
+tool_result(open("add.py").read())
+
+ok, _ = permission("Bash", {"command": "python3 -m pytest -q", "description": "Run the tests"})
+assistant(None, "Bash", {"command": "python3 -m pytest -q"})
+tool_result("2 passed in 0.02s" if ok else "(skipped: not allowed)")
+
+ok, msg = permission("Bash", {"command": "git push --force origin main"})
+if ok:
+    assistant(None, "Bash", {"command": "git push --force origin main"})
+    tool_result("Everything up-to-date")
+else:
+    assistant(f"Understood, I will not force-push. ({msg or 'denied'})")
+
+choice = ask("Which change should I make?", ["Add subtract()", "Add docstring to add()", "Fix add() only"], header="Change")
+edit_file(choice)
+assistant(f"Applying: {choice}", "Edit", {"file_path": os.path.join(os.getcwd(), "add.py"), "old_string": "x", "new_string": "y"})
+tool_result("The file has been updated.")
+assistant("Done. Tell me if you want anything else, or finish the session.")
+hook("Stop", {"stop_hook_active": False})
+
+say("\n> ")
+while True:
+    r, _, _ = select.select([sys.stdin], [], [], 0.5)
+    if not r:
+        continue
+    line = sys.stdin.readline()
+    if not line:
+        break
+    text = line.strip()
+    if not text:
+        continue
+    user(text)
+    if text.lower() in ("exit", "/exit", "quit"):
+        break
+    assistant(f"Okay: {text}", "Bash", {"command": "echo ok"})
+    tool_result("ok")
+    assistant("Done with that.")
+    hook("Stop", {"stop_hook_active": False})
+    say("\n> ")
+
+hook("SessionEnd", {"reason": "prompt_input_exit"})
+say("bye")

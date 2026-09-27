@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import shutil
+import sys
+import tomllib
+
+CONFIG = os.environ.get("HIVESWARM_CONFIG", os.path.expanduser(os.environ.get("HIVESWARM_HOME", "~/.hiveswarm") + "/config.toml"))
+
+USAGE = """hm-config — read or change one setting in Hiveswarm's config.toml without an editor
+
+  hm-config get <dotted.key>
+  hm-config set <dotted.key> <value>
+
+Examples:
+  hm-config get verify.network
+  hm-config set verify.network hiveswarm-egress
+  hm-config set projects.demo.verify_image node:22-slim
+  hm-config set watch.stall_minutes 5
+
+Values: true/false become booleans, whole numbers become integers, anything else is a string.
+A backup of the previous file is kept at config.toml.bak. Restart the services afterwards:
+  systemctl --user restart hiveswarm-decide hiveswarm   (or restart `hm up`)
+"""
+
+
+def parse_value(raw: str):
+    if raw in ("true", "false"):
+        return raw == "true"
+    if re.fullmatch(r"-?\d+", raw):
+        return int(raw)
+    return raw
+
+
+def toml_value(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    return json.dumps(v)
+
+
+def get(data, dotted):
+    cur = data
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def set_key(text: str, dotted: str, value) -> str:
+    if "." not in dotted:
+        raise SystemExit("key must be section.key, e.g. verify.network")
+    section, key = dotted.rsplit(".", 1)
+    header = re.compile(r"^\[" + re.escape(section) + r"\][ \t]*$", re.M)
+    line = f"{key} = {toml_value(value)}"
+    m = header.search(text)
+    if not m:
+        return text.rstrip("\n") + f"\n\n[{section}]\n{line}\n"
+    body_start = m.end() + 1
+    nxt = re.search(r"^\[", text[body_start:], re.M)
+    body_end = body_start + nxt.start() if nxt else len(text)
+    body = text[body_start:body_end]
+    key_re = re.compile(r"^" + re.escape(key) + r"[ \t]*=.*$", re.M)
+    if key_re.search(body):
+        body = key_re.sub(line, body, count=1)
+    else:
+        body = body.rstrip("\n") + ("\n" if body.strip() else "") + line + "\n" + ("\n" if nxt else "")
+    return text[:body_start] + body + text[body_end:]
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(USAGE)
+        return
+    if not os.path.isfile(CONFIG):
+        raise SystemExit(f"error: {CONFIG} not found")
+    text = open(CONFIG).read()
+    if args[0] == "get" and len(args) == 2:
+        v = get(tomllib.loads(text), args[1])
+        print("(not set)" if v is None else (json.dumps(v) if not isinstance(v, str) else v))
+        return
+    if args[0] == "set" and len(args) == 3:
+        value = parse_value(args[2])
+        new = set_key(text, args[1], value)
+        parsed = tomllib.loads(new)
+        if get(parsed, args[1]) != value:
+            raise SystemExit("error: the change didn't take; config.toml left untouched")
+        shutil.copyfile(CONFIG, CONFIG + ".bak")
+        with open(CONFIG, "w") as f:
+            f.write(new)
+        print(f"{args[1]} = {toml_value(value)}")
+        return
+    print(USAGE)
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

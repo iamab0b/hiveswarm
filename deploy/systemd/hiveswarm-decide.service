@@ -1,0 +1,15 @@
+# Decide service as a systemd user unit: ~/.config/systemd/user/hiveswarm-decide.service
+[Unit]
+Description=Hiveswarm decide service (task classification, swarm sizing, risk gate, audits)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.hiveswarm/env
+ExecStart=%h/.local/bin/hiveswarm-decide
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

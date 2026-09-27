@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+webapp/node_modules/
+webapp/dist/
+.hiveswarm/
+*.log
+webapp/tsconfig.tsbuildinfo
