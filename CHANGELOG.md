@@ -9,6 +9,9 @@ All notable changes to Hiveswarm. The format follows [Keep a Changelog](https://
 First public release, renamed from the private project "Hivemind" (the name was taken on PyPI).
 
 ### Added
+- **Hiveswarm Desktop** (`desktop/`): an Electron app for Windows, macOS and Linux that installs the engine on first run (into WSL2 on Windows, from the wheel bundled with the app), starts `hm up`, shows the swarm in its own window with a tray icon, and stops the swarm on quit. Releases are built by `.github/workflows/release.yml` on every `v*` tag; nothing is published to PyPI.
+- Long-polled claims (`POST /claim` with `wait`): an idle worker lane makes ~3 requests a minute instead of one every few seconds; local copies sync once a minute and fetch only when the hub's branch moved; the app's event stream slows down on a quiet swarm and stops for hidden tabs.
+- Connection log: every request to the daemon is recorded in `~/.hiveswarm/logs/net-*.jsonl`; outages are warned about in the worker log; `hm net` summarises traffic, errors and outages and `hm report` includes it.
 - `hm init` / `hm up`: a single-machine setup in two commands; `~/.hiveswarm` as the default home; `~/.hiveswarm/env` for the URL and token.
 - `openai` decide backend for any OpenAI-compatible endpoint; `decide.fallback`; `decide.posture` (`redacted` / `full` / `local`).
 - `verify.mode = auto | docker | local` so acceptance commands run without Docker.

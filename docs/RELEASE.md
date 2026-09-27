@@ -2,7 +2,7 @@
 
 ## Names
 
-- **PyPI**: `hiveswarm` — free as of 2026-09-26 (`hivemind`, the project's old name, is taken by an unrelated package).
+- **PyPI**: not used. Releases are GitHub Releases with the desktop installers and the wheel attached; `hiveswarm` is free on PyPI (as of 2026-09-26) should that change.
 - **Import**: `hiveswarm`. **CLI**: `hm`, plus `hiveswarm-daemon`, `hiveswarm-decide`, `hiveswarm-worker`, `hiveswarm-mcp`.
 - **GitHub**: `iamab0b/hiveswarm`. **Entry-point group**: `hiveswarm.adapters`.
 
@@ -10,50 +10,21 @@
 
 - [ ] `pytest -q` green locally (including `-m e2e`), CI green on `main`.
 - [ ] `src/hiveswarm/ui_dist/` rebuilt from `webapp/` (CI's `webapp` job checks the file list).
-- [ ] `CHANGELOG.md`: move `[Unreleased]` into `[0.1.0]` with the date; bump `version` in `pyproject.toml`, `src/hiveswarm/__init__.py` and `webapp/package.json` (all `0.1.0`).
-- [ ] Fresh-install check on a machine without a checkout:
-  ```bash
-  python -m build
-  python -m venv /tmp/v && /tmp/v/bin/pip install dist/hiveswarm-0.1.0-py3-none-any.whl
-  HIVESWARM_HOME=/tmp/hs /tmp/v/bin/hm init --project smoke && HIVESWARM_HOME=/tmp/hs /tmp/v/bin/hm up --no-open
-  ```
-  then `hm add smoke "…"` from another terminal with a real agent, and one `hm session new`.
+- [ ] `CHANGELOG.md`: move `[Unreleased]` into `[0.1.0]` with the date; bump `version` in `pyproject.toml`, `src/hiveswarm/__init__.py`, `webapp/package.json` and `desktop/package.json` (all `0.1.0`).
+- [ ] Fresh-install check: the desktop app from a `workflow_dispatch` draft on a machine without a checkout, through the first run; then `hm add smoke "…"` with a real agent and one `hm session new`.
 - [ ] README screenshots current (`python tests/screenshots.py`).
 
 ## Publishing
 
-1. **PyPI trusted publishing** (no API tokens in secrets): on pypi.org create the project `hiveswarm` → Publishing → add a GitHub publisher with owner `iamab0b`, repo `hiveswarm`, workflow `release.yml`, environment `pypi`. Then add `.github/workflows/release.yml`:
-   ```yaml
-   name: Release
-   on:
-     push:
-       tags: ["v*"]
-   jobs:
-     build:
-       runs-on: ubuntu-latest
-       steps:
-         - uses: actions/checkout@v4
-         - uses: actions/setup-python@v5
-           with: { python-version: "3.12" }
-         - run: pip install build && python -m build
-         - uses: actions/upload-artifact@v4
-           with: { name: dist, path: dist/ }
-     publish:
-       needs: build
-       runs-on: ubuntu-latest
-       environment: pypi
-       permissions: { id-token: write, contents: write }
-       steps:
-         - uses: actions/download-artifact@v4
-           with: { name: dist, path: dist/ }
-         - uses: pypa/gh-action-pypi-publish@release/v1
-         - uses: softprops/action-gh-release@v2
-           with: { files: dist/*, generate_release_notes: true }
-   ```
-2. Tag and push: `git tag -a v0.1.0 -m "Hiveswarm 0.1.0" && git push origin v0.1.0`. The workflow builds, publishes to PyPI and creates the GitHub release with the wheel and sdist attached.
-3. Verify: `uv tool install hiveswarm && hm --version` on a clean machine.
+`.github/workflows/release.yml` runs on every `v*` tag: it builds the wheel, then Hiveswarm Desktop for Windows (NSIS installer + portable), Linux (AppImage + deb) and macOS (dmg, unsigned) with the wheel bundled, and creates the GitHub Release with all of them plus `SHA256SUMS.txt` and generated notes.
 
-A first manual publish works too: `pip install twine && twine upload dist/*` with a PyPI API token.
+```bash
+git tag -a v0.1.0 -m "Hiveswarm 0.1.0" && git push origin v0.1.0
+```
+
+Then check the release page, download the installer for your own machine and go through a first run. `workflow_dispatch` produces a draft release for a dry run.
+
+Signing: macOS builds are unsigned (users right-click → Open once); Windows builds are unsigned (SmartScreen shows "unknown publisher" until the app has reputation). Both are fine for 0.x; a signing certificate can be added to the workflow later without changing anything else.
 
 ## After 0.1
 

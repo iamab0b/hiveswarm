@@ -18,6 +18,10 @@ Browser tests: `playwright install chromium`, then `pytest -m e2e` (or set `HIVE
 
 Lint: `ruff check src tests examples` (CI runs it).
 
+### The desktop app
+
+`desktop/` is an Electron shell around `hm up` (see `desktop/README.md`). `cd desktop && npm ci && npm test` runs its unit tests; with `HIVESWARM_WHEEL_DIR=../dist` (after `python -m build --wheel`) the test also installs the engine into a scratch home and boots it, which is what CI does.
+
 ### The web app
 
 ```bash
@@ -25,7 +29,7 @@ cd webapp && npm ci && npm run dev      # live reload against `hm ui` on :7790
 npm run build && rm -rf ../src/hiveswarm/ui_dist && cp -r dist ../src/hiveswarm/ui_dist
 ```
 
-The built app is committed under `src/hiveswarm/ui_dist/` so `pip install hiveswarm` needs no Node; CI checks that the committed build matches the sources. Rebuild it in the same PR as any `webapp/` change.
+The built app is committed under `src/hiveswarm/ui_dist/` so installing the wheel needs no Node; CI checks that the committed build matches the sources. Rebuild it in the same PR as any `webapp/` change.
 
 ### Trying a change for real
 

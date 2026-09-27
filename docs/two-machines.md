@@ -7,7 +7,7 @@ Everything below also applies to one worker on the hub itself plus extra workers
 ## Hub
 
 ```bash
-uv tool install hiveswarm
+pip install --user ./hiveswarm-0.1.0-py3-none-any.whl     # the wheel from the release page
 hm init --project myapp --repo ~/repos/myapp
 ```
 
@@ -40,8 +40,9 @@ or `hm up --no-ui` runs both plus a worker on the hub (useful when the hub also 
 
 ## Worker
 
+Install the desktop app from the release page (it installs the engine on first run and starts the worker and the app for you), or the wheel as on the hub. Then:
+
 ```bash
-uv tool install hiveswarm
 mkdir -p ~/.hiveswarm
 printf 'HIVESWARM_URL=http://hub:7778\nHIVESWARM_TOKEN=<the hub token>\n' > ~/.hiveswarm/env
 chmod 600 ~/.hiveswarm/env
@@ -72,7 +73,7 @@ systemctl --user enable --now hiveswarm-decide hiveswarm
 loginctl enable-linger $USER
 ```
 
-On a worker: `hiveswarm-worker.service` and `hiveswarm-ui.service` the same way. The units read `~/.hiveswarm/env` and expect the console scripts in `~/.local/bin` (where `uv tool install` and `pipx` put them). Logs: `journalctl --user -u hiveswarm -f`.
+On a worker: `hiveswarm-worker.service` and `hiveswarm-ui.service` the same way. The units read `~/.hiveswarm/env` and expect the console scripts in `~/.local/bin` (where `pip install --user`, `pipx` and the desktop app put them). Logs: `journalctl --user -u hiveswarm -f`.
 
 Interactive sessions from a worker service need tmux and the agents' sign-ins available to that user; `hm login claude` handles Claude Code, the others keep their own credential files.
 
@@ -91,6 +92,21 @@ A machine with a GPU can serve two roles:
 2. **Hub-local agent lane** — an agent that runs on the hub itself, inside Docker, working off the same worktrees. `deploy/hub/` has an image and an egress-only Docker network for it; enable with `[workers.prime_agent] enabled = true`. The router treats it like any other agent, with its own row in Stats.
 
 Neither is required: a laptop-only swarm with the `openai` or `mock` backend is a complete setup.
+
+## Network: what the laptop sends, and how to see it
+
+An idle worker is quiet by design: each agent lane holds one long-polled `POST /claim` that the daemon answers after 20 s (`claim_wait_seconds` in `worker.toml`), the session host holds one long-polled `GET /sessions/commands`, and the local-copy sync lists projects once a minute (`local_sync_seconds`) and only fetches over ssh when the hub's branch moved. An open app tab polls the daemon every second while something is happening and every 3–6 s once the swarm has been quiet for 30 s; a hidden tab polls nothing. All connections are pooled and kept alive, so there is no connection churn.
+
+Every request each process makes is recorded, with timing, size and outcome, in `~/.hiveswarm/logs/net-worker.jsonl` and `net-ui.jsonl` (5 MB, one rotation). A run of three failed requests is logged as an outage start in the worker's own log (`daemon unreachable: 3 consecutive failed requests`) and its end (`daemon reachable again after 45 s`). `hm net` reads the files:
+
+```bash
+hm net                    # last 60 min: requests per minute, per-endpoint table, errors, outages
+hm net --since 6h
+hm net --watch 5          # live
+hm net --json > net.json
+```
+
+`hm report` includes the last two hours. If your Wi-Fi drops, `hm net --since 2h` right after it comes back tells you whether Hiveswarm was sending anything unusual at the time (a burst of retries, a stuck endpoint) or was idle at its usual few requests a minute, which points at the adapter or driver rather than the app. On Windows, pair it with `netsh wlan show wlanreport` and the WLAN-AutoConfig events in Event Viewer, and check the adapter's power-management setting ("Allow the computer to turn off this device to save power") and the VPN client's logs.
 
 ## Troubleshooting
 

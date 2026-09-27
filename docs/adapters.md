@@ -79,8 +79,8 @@ dependencies = ["hiveswarm"]
 my_agent = "hiveswarm_adapter_myagent:my_agent"
 ```
 
-Install it next to Hiveswarm (`pip install .` in the same environment, or `uv tool install hiveswarm --with
-hiveswarm-adapter-myagent`), then enable it on a worker:
+Install it next to Hiveswarm (`pip install .` in the same environment; with the desktop app that is
+`~/.hiveswarm/venv/bin/pip install .`), then enable it on a worker:
 
 ```toml
 # ~/.hiveswarm/worker.toml

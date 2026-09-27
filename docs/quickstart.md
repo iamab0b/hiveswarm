@@ -1,6 +1,6 @@
-# Quickstart: one machine
+# Quickstart: one machine, engine only
 
-Everything on one laptop or desktop: the daemon, the classifier, one worker and the app. Ten minutes if the agents are already installed.
+Everything on one laptop or desktop: the daemon, the classifier, one worker and the app, from a terminal. Ten minutes if the agents are already installed. If you would rather not touch a terminal, the [desktop app](desktop.md) does steps 2–4 for you.
 
 ## 1. Prerequisites
 
@@ -18,11 +18,13 @@ Everything on one laptop or desktop: the daemon, the classifier, one worker and 
 
 ## 2. Install
 
+Download the wheel from the [Releases page](https://github.com/iamab0b/hiveswarm/releases), then:
+
 ```bash
-uv tool install hiveswarm
+pip install --user ./hiveswarm-0.1.0-py3-none-any.whl
 ```
 
-`pipx install hiveswarm` or `pip install --user hiveswarm` work the same way. The web app is bundled in the wheel; no Node needed. From a checkout: `pip install -e '.[dev]'`.
+`pipx install ./hiveswarm-*.whl` or `uv tool install ./hiveswarm-*.whl` work the same way. The web app is bundled in the wheel; no Node needed. From a checkout: `pip install -e '.[dev]'`.
 
 ## 3. Initialise
 
