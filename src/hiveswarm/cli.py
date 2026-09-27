@@ -399,6 +399,38 @@ def cmd_lead_skill(a: argparse.Namespace) -> None:
     print("in Claude Code, type /hiveswarm-lead <goal>  (needs the hiveswarm MCP server: claude mcp add hiveswarm ...)")
 
 
+def _parse_span(text: str) -> float:
+    t = text.strip().lower()
+    mult = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    if t and t[-1] in mult:
+        return float(t[:-1]) * mult[t[-1]]
+    return float(t) * 60
+
+
+def cmd_net(a: argparse.Namespace) -> None:
+    """What this machine's Hiveswarm processes sent to the daemon and how it went, from ~/.hiveswarm/logs/net-*.jsonl."""
+    import time as _time
+
+    from . import netlog
+    window = _parse_span(a.since)
+    roles = [r.strip() for r in a.role.split(",")] if a.role else None
+
+    def once() -> str:
+        events = netlog.read_events(roles, since=_time.time() - window - 3600)
+        summary = netlog.summarize(events, window)
+        return json.dumps(summary, indent=2) if a.json else netlog.render(summary)
+
+    if not a.watch:
+        print(once())
+        return
+    try:
+        while True:
+            print("\x1b[2J\x1b[H" + once(), flush=True)
+            _time.sleep(float(a.watch))
+    except KeyboardInterrupt:
+        pass
+
+
 def cmd_report(a: argparse.Namespace) -> None:
     import subprocess
     import time as _time
@@ -453,6 +485,13 @@ def cmd_report(a: argparse.Namespace) -> None:
     section("feed (last 60)")
     for e in _get("/feed", tail=60).get("entries", []):
         print(f"{_time.strftime('%H:%M:%S', _time.localtime(int(e['ts'])))} {e['task_id'][:8]} {e['source']:18} {(e['chunk'] or '')[:160]}")
+    section("network (last 2h, this machine)")
+    try:
+        from . import netlog
+        events = netlog.read_events(None, since=_time.time() - 3 * 3600)
+        print(netlog.render(netlog.summarize(events, 2 * 3600)))
+    except Exception as e:
+        print(f"unavailable: {e}")
     section("local")
     for cmd in (["tmux", "-L", "hm", "list-windows", "-t", "hm"], ["systemctl", "--user", "status", "hiveswarm-worker", "--no-pager", "-n", "25"],
                 ["systemctl", "status", "hiveswarm", "--no-pager", "-n", "25"], ["docker", "ps", "--format", "{{.Names}} {{.Status}}"]):
@@ -615,6 +654,13 @@ def main() -> None:
 
     s = sub.add_parser("report", help="diagnostics dump to paste when something breaks (hm report > hiveswarm-report.txt)")
     s.set_defaults(fn=cmd_report)
+
+    s = sub.add_parser("net", help="connection log: what this machine sent to the daemon, errors and outages (hm net --watch 5)")
+    s.add_argument("--since", default="60m", help="window: 30m, 2h, 1d (default 60m)")
+    s.add_argument("--role", default=None, help="worker, ui, or both (default)")
+    s.add_argument("--watch", default=None, metavar="SECONDS", help="refresh every N seconds")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_net)
 
     s = sub.add_parser("classify", help="classify arbitrary text via the decide service")
     s.add_argument("text")

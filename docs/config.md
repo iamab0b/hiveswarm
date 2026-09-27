@@ -105,7 +105,9 @@ Optional hub-local lanes for a machine that runs a model itself. `prime_agent` d
 | `root` | `~/.hiveswarm` | mirrors and worktrees (`hm init` uses `~/.hiveswarm/work`) |
 | `local_projects` | `~/hiveswarm` | a fast-forwarded copy of every project's branch on this machine; `""` turns it off |
 | `sandbox_wrapper` | none | a command that wraps every agent process (see `scripts/hm-sandbox`) |
-| `poll_seconds` | `10` | |
+| `poll_seconds` | `10` | wait between claims after an error, or when `claim_wait_seconds` is 0 |
+| `claim_wait_seconds` | `20` | the daemon holds an idle claim this long before answering; 0 = plain polling every `poll_seconds` |
+| `local_sync_seconds` | `60` | how often local copies check the hub for moved branches |
 | `keep_worktrees` | `false` | keep finished worktrees for inspection |
 | `hook_port` | `7791` | Claude Code hooks call back here; `0` picks a free port |
 
@@ -139,4 +141,5 @@ The table name is the agent id shown everywhere; `adapter` picks the implementat
 | `HIVESWARM_URL`, `HIVESWARM_TOKEN` | how `hm`, the app and the MCP server reach the daemon |
 | `HIVESWARM_DECIDE_API_KEY` / `OPENAI_API_KEY`, `TYPESAFE_API_KEY` | decide backends |
 | `HIVESWARM_ORIGIN` | label the MCP server puts on tasks it creates |
+| `HIVESWARM_NETLOG` | `0` turns off the per-request connection log (`~/.hiveswarm/logs/net-*.jsonl`) |
 | `HIVEMIND_*` | the pre-rename names still work |

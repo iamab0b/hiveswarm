@@ -49,6 +49,7 @@ class Register(BaseModel):
 
 class Claim(BaseModel):
     agent_id: str
+    wait: float = 0  # long-poll: hold the request up to this many seconds (max 25) until a task is assigned
 
 
 class Complete(BaseModel):
@@ -282,18 +283,35 @@ def unregister(r: Register) -> dict[str, Any]:
 
 
 @app.post("/claim", dependencies=[Depends(_auth)])
-def claim(c: Claim) -> Any:
+async def claim(c: Claim, request: Request) -> Any:
+    """A worker lane asks for work. With `wait`, the daemon holds the request until something is assigned to that
+    agent or the time is up, so an idle worker makes a few requests a minute instead of one every few seconds."""
+    import asyncio
+    import time as _time
     cfg = load()
+    lease = int(cfg.get("daemon.lease_seconds", 1800))
+    deadline = _time.time() + min(max(c.wait, 0), 25)
     db.agent_touch(c.agent_id)
-    t = db.task_claim_assigned(c.agent_id, int(cfg.get("daemon.lease_seconds", 1800)))
+    while True:
+        t = await asyncio.to_thread(db.task_claim_assigned, c.agent_id, lease)
+        if t or _time.time() >= deadline:
+            break
+        if await request.is_disconnected():
+            return None
+        await asyncio.sleep(0.5)
     if not t:
+        db.agent_touch(c.agent_id)
         return None
-    aid = db.attempt_start(t["id"], c.agent_id, None)
+    return await asyncio.to_thread(_claimed, c.agent_id, t, cfg)
+
+
+def _claimed(agent_id: str, t: Any, cfg: Any) -> dict[str, Any]:
+    aid = db.attempt_start(t["id"], agent_id, None)
     db.task_set_state(t["id"], "running")
     cls = db.classification_get(t["id"])
     handoff = dispatcher.handoff_context(t["id"])
     if handoff:
-        db.log_append(t["id"], "daemon", f"handoff to {c.agent_id}:\n{handoff.strip()}")
+        db.log_append(t["id"], "daemon", f"handoff to {agent_id}:\n{handoff.strip()}")
     return {"task": dict(t), "attempt_id": aid, "classification": dict(cls) if cls else None,
             "handoff": handoff, "hub_ssh": cfg.get("daemon.hub_ssh") or cfg.get("daemon.spark_ssh", ""),
             "spark_ssh": cfg.get("daemon.hub_ssh") or cfg.get("daemon.spark_ssh", "")}

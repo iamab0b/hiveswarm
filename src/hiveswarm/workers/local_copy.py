@@ -117,7 +117,7 @@ class LocalCopies:
                 note = "copied to this machine"
             else:
                 known = self._state["heads"].get(name)
-                if not force and hub_head and known == hub_head and time.time() - float(self._state.get("checked", {}).get(name, 0)) < 300:
+                if not force and hub_head and known == hub_head and time.time() - float(self._state.get("checked", {}).get(name, 0)) < 900:
                     return {"ok": True, "note": "up to date", "skipped": True}
                 r = _git("fetch", "--prune", "origin", cwd=str(path))
                 if r.returncode != 0:
@@ -205,7 +205,7 @@ class LocalCopies:
         if changed:
             self._save_state()
 
-    def loop(self, stop: threading.Event | None = None, every: float = 30.0) -> None:
+    def loop(self, stop: threading.Event | None = None, every: float = 60.0) -> None:
         stop = stop or threading.Event()
         while not stop.is_set():
             try:

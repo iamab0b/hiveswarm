@@ -104,7 +104,20 @@ export const useStore = create<State>((set, get) => ({
     get().loadProjects();
     api.agents().then((agents) => set({ agents })).catch(() => undefined);
 
+    // A hidden tab drops its event stream (and with it the polling behind it) and reconnects when it is shown again.
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        if (source) {
+          source.close();
+          source = null;
+        }
+      } else if (!source) {
+        connect();
+      }
+    });
+
     const connect = () => {
+      if (document.hidden) return;
       source = new EventSource("/api/events");
       source.onopen = () => set({ connected: true, error: null });
       source.onerror = () => set({ connected: false });

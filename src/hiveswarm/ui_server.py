@@ -23,6 +23,8 @@ import httpx
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+from . import netlog
+
 log = logging.getLogger("hiveswarm.ui")
 
 TMUX_SOCKET = "hm"
@@ -56,7 +58,8 @@ def client() -> httpx.AsyncClient:
     global _client
     if _client is None:
         headers = {"Authorization": f"Bearer {S.token}"} if S.token else {}
-        _client = httpx.AsyncClient(base_url=S.daemon, headers=headers, timeout=120)
+        _client = netlog.LoggedAsyncClient(netlog.NetLog("ui"), base_url=S.daemon, headers=headers, timeout=120,
+                                           limits=httpx.Limits(max_connections=16, max_keepalive_connections=8, keepalive_expiry=120))
     return _client
 
 
@@ -91,10 +94,15 @@ async def events(request: Request) -> StreamingResponse:
         last_feed: int | None = None
         last_state_hash = ""
         last_state_at = 0.0
+        last_change_at = time.monotonic()
         yield "retry: 2000\n\n"
         while True:
             if await request.is_disconnected():
                 return
+            # Poll fast while something is happening, slowly once the swarm has been quiet for a while, so an open
+            # tab on an idle swarm costs a request every few seconds rather than several per second.
+            idle = time.monotonic() - last_change_at > 30
+            feed_every, state_every = (3.0, 6.0) if idle else (1.0, 1.5)
             try:
                 if last_feed is None:
                     d = await _fetch("/feed", tail=2000)
@@ -102,10 +110,11 @@ async def events(request: Request) -> StreamingResponse:
                     d = await _fetch("/feed", since=last_feed)
                 entries = d.get("entries", [])
                 if entries:
+                    last_change_at = time.monotonic()
                     yield f"event: feed\ndata: {json.dumps(entries)}\n\n"
                 last_feed = max(last_feed or 0, int(d.get("last_id") or 0), *[int(e["id"]) for e in entries] or [0])
                 now = time.monotonic()
-                if now - last_state_at >= 1.5:
+                if now - last_state_at >= state_every:
                     last_state_at = now
                     summary, tasks, inbox, agents = await asyncio.gather(
                         _fetch("/summary"), _fetch("/tasks", limit=300), _fetch("/inbox"), _fetch("/agents"))
@@ -113,13 +122,15 @@ async def events(request: Request) -> StreamingResponse:
                              "ts": int(time.time())}
                     h = hashlib.md5(json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()
                     if h != last_state_hash:
+                        if last_state_hash:
+                            last_change_at = time.monotonic()
                         last_state_hash = h
                         yield f"event: state\ndata: {json.dumps(state, default=str)}\n\n"
                 yield ": ping\n\n"
             except Exception as e:
                 yield f"event: error\ndata: {json.dumps({'error': str(e)[:200]})}\n\n"
                 await asyncio.sleep(2)
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(feed_every)
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 

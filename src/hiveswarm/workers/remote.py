@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from .. import netlog
 from . import adapters
 from .session_host import SessionHost, hook_settings, kill_window, window_alive
 
@@ -44,8 +45,9 @@ class Client:
         self.h = {"Authorization": f"Bearer {token}"} if token else {}
         self.logs_supported = True
         self._warned = False
-        self._http = httpx.Client(base_url=self.url, headers=self.h, timeout=60,
-                                  limits=httpx.Limits(max_connections=12, max_keepalive_connections=8, keepalive_expiry=120))
+        self.netlog = netlog.NetLog("worker")
+        self._http = netlog.LoggedClient(self.netlog, base_url=self.url, headers=self.h, timeout=60,
+                                         limits=httpx.Limits(max_connections=12, max_keepalive_connections=8, keepalive_expiry=120))
 
     def post(self, path: str, body: dict[str, Any], timeout: int = 60) -> Any:
         r = self._http.post(path, json=body, timeout=timeout)
@@ -425,10 +427,14 @@ def _adopt_sessions(client: Client, cfg: dict[str, Any], root: Path, host: str) 
         log.info("session %s: re-adopted tmux window %s", tid[:8], win)
 
 
+CLAIM_WAIT = 20  # seconds the daemon holds an idle claim before answering "nothing"; keeps idle traffic to ~3 requests/min/lane
+
+
 def _lane(client: Client, cfg: dict[str, Any], agent_id: str, poll: int, once: bool) -> None:
+    wait = 0 if once else int(cfg.get("claim_wait_seconds", CLAIM_WAIT))
     while True:
         try:
-            claim = client.post("/claim", {"agent_id": agent_id}, timeout=30)
+            claim = client.post("/claim", {"agent_id": agent_id, "wait": wait}, timeout=wait + 30)
         except Exception as e:
             log.warning("claim failed for %s: %s", agent_id, e)
             claim = None
@@ -443,7 +449,7 @@ def _lane(client: Client, cfg: dict[str, Any], agent_id: str, poll: int, once: b
             continue
         if once:
             return
-        time.sleep(poll)
+        time.sleep(1.0 if wait else poll)
 
 
 def main() -> None:
@@ -543,15 +549,11 @@ def main() -> None:
     copies = LocalCopies(client, cfg, host)
     if copies.enabled and not a.once:
         log.info("local copies of every project under %s (fast-forwarded when the hub's branch moves)", copies.root)
-        threading.Thread(target=copies.loop, name="local-copies", daemon=True).start()
+        threading.Thread(target=copies.loop, kwargs={"every": float(cfg.get("local_sync_seconds", 60))},
+                         name="local-copies", daemon=True).start()
     else:
         log.info("local project copies are off (local_projects = \"\" in worker.toml)")
     threads = []
-    for agent_id, i in lanes:
-        t = threading.Thread(target=_lane, args=(client, cfg, agent_id, poll, a.once), name=f"lane-{agent_id}-{i}", daemon=True)
-        t.start()
-        threads.append(t)
-        time.sleep(min(1.0, poll / max(len(lanes), 1)))
     def _retire(*_: Any) -> None:
         for agent_id in serving:
             try:
@@ -567,6 +569,11 @@ def main() -> None:
     import signal as _signal
     _signal.signal(_signal.SIGTERM, _on_term)
     try:
+        for agent_id, i in lanes:
+            t = threading.Thread(target=_lane, args=(client, cfg, agent_id, poll, a.once), name=f"lane-{agent_id}-{i}", daemon=True)
+            t.start()
+            threads.append(t)
+            time.sleep(min(1.0, poll / max(len(lanes), 1)))
         for t in threads:
             t.join()
     except KeyboardInterrupt:

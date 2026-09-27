@@ -87,6 +87,7 @@ repo_path = "{self.repo}"
 daemon_url = "http://127.0.0.1:{self.port}"
 root = "{home / 'work'}"
 local_projects = "{home / 'local'}"
+local_sync_seconds = 5
 poll_seconds = 1
 hook_port = {self.hook_port}
 
