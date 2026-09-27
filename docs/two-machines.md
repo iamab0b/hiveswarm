@@ -7,7 +7,7 @@ Everything below also applies to one worker on the hub itself plus extra workers
 ## Hub
 
 ```bash
-pip install --user ./hiveswarm-0.1.0-py3-none-any.whl     # the wheel from the release page
+pip install --user ./hiveswarm-0.1.1-py3-none-any.whl
 hm init --project myapp --repo ~/repos/myapp
 ```
 
@@ -36,7 +36,7 @@ hiveswarm-decide
 hiveswarm-daemon
 ```
 
-or `hm up --no-ui` runs both plus a worker on the hub (useful when the hub also has agent CLIs). Note the token: `grep TOKEN ~/.hiveswarm/env`.
+or `hm up --no-ui` runs both plus a worker on the hub (useful when the hub also has agent CLIs). On a laptop whose `worker.toml` points at the hub, `hm up` (and the desktop app) starts only the worker and the app. Note the token: `grep TOKEN ~/.hiveswarm/env`.
 
 ## Worker
 

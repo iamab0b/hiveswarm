@@ -4,7 +4,7 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { Engine, shQuote } = require("../src/engine");
+const { Engine, shQuote, cleanPath } = require("../src/engine");
 
 test("shell quoting survives single quotes", () => {
   assert.strictEqual(shQuote("it's"), `'it'\\''s'`);
@@ -14,11 +14,39 @@ test("argv goes through wsl.exe on Windows and a login shell elsewhere", () => {
   const w = new Engine({ resourcesPath: "/x", logPath: null, settings: { distro: "Ubuntu", user: "sam" }, platform: "win32" });
   const a = w.argv("hm --version");
   assert.ok(a.cmd.endsWith("wsl.exe"));
-  assert.deepStrictEqual(a.args, ["-d", "Ubuntu", "-u", "sam", "--", "bash", "-lc", "hm --version"]);
+  assert.deepStrictEqual(a.args, ["-d", "Ubuntu", "-u", "sam", "-e", "bash", "-lc", "hm --version"]);
+  assert.deepStrictEqual(w.argv("x", { interactive: true }).args.slice(-3), ["bash", "-lic", "x"]);
   const l = new Engine({ resourcesPath: "/x", logPath: null, settings: {}, platform: "linux" });
   assert.deepStrictEqual(l.argv("hm --version"), { cmd: "bash", args: ["-lc", "hm --version"] });
   const custom = new Engine({ resourcesPath: "/x", logPath: null, settings: { shell: "zsh -lic" }, platform: "darwin" });
   assert.deepStrictEqual(custom.argv("x"), { cmd: "zsh", args: ["-lic", "x"] });
+});
+
+test("cleanPath drops Windows directories under WSL and duplicates", () => {
+  assert.strictEqual(cleanPath("/a:/mnt/c/Windows:/b:/a", "win32"), "/a:/b");
+  assert.strictEqual(cleanPath("/a:/mnt/data:/b", "linux"), "/a:/mnt/data:/b");
+});
+
+test("installedVersion tells Hiveswarm, a pre-rename hm, and nothing apart", { skip: process.platform === "win32" }, async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hs-hm-"));
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin);
+  const oldHome = process.env.HOME;
+  const oldPath = process.env.PATH;
+  process.env.HOME = home;
+  process.env.PATH = "/usr/bin:/bin";
+  try {
+    const e = new Engine({ resourcesPath: "/x", logPath: null, settings: {}, platform: "linux" });
+    e.userPath = bin;
+    assert.deepStrictEqual(await e.installedVersion(), { ok: true, version: null });
+    fs.writeFileSync(path.join(bin, "hm"), "#!/bin/sh\necho 'usage: hm [-h] {add,list}' >&2\nexit 2\n", { mode: 0o755 });
+    assert.deepStrictEqual(await e.installedVersion(), { ok: true, version: "other" });
+    fs.writeFileSync(path.join(bin, "hm"), "#!/bin/sh\necho hiveswarm 0.1.1\n", { mode: 0o755 });
+    assert.deepStrictEqual(await e.installedVersion(), { ok: true, version: "0.1.1" });
+  } finally {
+    process.env.HOME = oldHome;
+    process.env.PATH = oldPath;
+  }
 });
 
 test("bundledWheel reads the version from the file name", () => {
@@ -32,7 +60,7 @@ test("bundledWheel reads the version from the file name", () => {
 
 test("health reports false when nothing listens", async () => {
   const e = new Engine({ resourcesPath: "/x", logPath: null, settings: { port: 9 }, platform: "linux" });
-  assert.deepStrictEqual(await e.health(), { ui: false, daemon: false });
+  assert.deepStrictEqual(await e.health(), { ui: false, daemon: false, version: null });
 });
 
 // Full boot against a real wheel: installs into a scratch HOME, runs hm init and hm up, then stops. Linux only,
@@ -62,4 +90,43 @@ test("installs the engine from the wheel, initialises and starts the app", { ski
   await e.stop();
   assert.strictEqual(e.proc, null);
   assert.strictEqual(e.state, "stopped");
+});
+
+// A laptop coming from Hivemind: ~/.config/hivemind/worker.toml points at a hub (unreachable here). The app installs the
+// engine, migrates the config (reusing the old folders), and runs hm up in hub mode: worker + app, no local daemon.
+test("migrates a Hivemind laptop and starts in hub mode", { skip: process.platform !== "linux" || !process.env.HIVESWARM_WHEEL_DIR, timeout: 15 * 60 * 1000 }, async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hs-legacy-"));
+  const res = fs.mkdtempSync(path.join(os.tmpdir(), "hs-res-"));
+  fs.mkdirSync(path.join(res, "engine"));
+  for (const f of fs.readdirSync(process.env.HIVESWARM_WHEEL_DIR)) {
+    if (f.endsWith(".whl")) fs.copyFileSync(path.join(process.env.HIVESWARM_WHEEL_DIR, f), path.join(res, "engine", f));
+  }
+  fs.mkdirSync(path.join(home, ".config", "hivemind"), { recursive: true });
+  fs.mkdirSync(path.join(home, "hivemind-work"));
+  fs.mkdirSync(path.join(home, "hivemind"));
+  fs.writeFileSync(path.join(home, ".config", "hivemind", "worker.toml"),
+    'daemon_url = "http://192.0.2.1:7778"\nspark_ssh = "me@192.0.2.1"\n\n[agents.codex]\nadapter = "codex"\n');
+  const oldHome = process.env.HOME;
+  process.env.HOME = home;
+  process.env.HIVEMIND_TOKEN = "legacy-token";
+  for (const k of ["HIVESWARM_HOME", "HIVESWARM_CONFIG", "HIVESWARM_URL", "HIVESWARM_TOKEN"]) delete process.env[k];
+  const port = 18000 + Math.floor(Math.random() * 1000);
+  const e = new Engine({ resourcesPath: res, logPath: path.join(home, "engine.log"), settings: { port }, platform: "linux" });
+  e.on("log", (l) => process.stdout.write("  | " + l + "\n"));
+  try {
+    assert.strictEqual(await e.start(), true, "engine started");
+    const w = fs.readFileSync(path.join(home, ".hiveswarm", "worker.toml"), "utf8");
+    assert.match(w, /root = "~\/hivemind-work"/);
+    assert.match(w, /local_projects = "~\/hivemind"/);
+    assert.match(fs.readFileSync(path.join(home, ".hiveswarm", "env"), "utf8"), /HIVESWARM_TOKEN=legacy-token/);
+    assert.ok(!fs.existsSync(path.join(home, ".hiveswarm", "config.toml")), "no local hub config was created");
+    assert.ok(e.lines.some((l) => /hub mode/.test(l)), "hm up ran in hub mode");
+    assert.ok(!e.lines.some((l) => /\[daemon\]/.test(l)), "no local daemon was started");
+    const h = await e.health();
+    assert.ok(h.ui && h.version, "the app answers and says which version it is");
+    await e.stop();
+  } finally {
+    process.env.HOME = oldHome;
+    delete process.env.HIVEMIND_TOKEN;
+  }
 });

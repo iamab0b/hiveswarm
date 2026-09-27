@@ -21,7 +21,7 @@ Everything on one laptop or desktop: the daemon, the classifier, one worker and 
 Download the wheel from the [Releases page](https://github.com/iamab0b/hiveswarm/releases), then:
 
 ```bash
-pip install --user ./hiveswarm-0.1.0-py3-none-any.whl
+pip install --user ./hiveswarm-0.1.1-py3-none-any.whl
 ```
 
 `pipx install ./hiveswarm-*.whl` or `uv tool install ./hiveswarm-*.whl` work the same way. The web app is bundled in the wheel; no Node needed. From a checkout: `pip install -e '.[dev]'`.

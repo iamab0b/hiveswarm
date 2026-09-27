@@ -116,11 +116,19 @@ async function boot(restart = false) {
     await engine.stop();
   }
   const h = await engine.health();
-  if (h.ui && !restart) {
+  const bundled = engine.bundledWheel();
+  const current = h.version && (!bundled || !bundled.version || h.version === bundled.version);
+  if (h.ui && !restart && current) {
     engine.setState("running", "engine already running");
-    engine.log(`found the app already up at ${engine.url}`);
+    engine.log(`found Hiveswarm ${h.version} already up at ${engine.url}`);
     win && win.loadURL(engine.url);
     return;
+  }
+  if (h.ui && !current) {
+    engine.log(h.version
+      ? `an older Hiveswarm (${h.version}) is answering on ${engine.url}; upgrading and restarting it`
+      : `something else (probably the old Hivemind app service) is answering on ${engine.url}; it will be replaced`);
+    if (h.version) await engine.stopExternal();
   }
   const ok = await engine.start();
   if (ok && win) win.loadURL(engine.url);

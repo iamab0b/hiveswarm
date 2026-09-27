@@ -30,8 +30,13 @@ def token_file(acfg: dict[str, Any] | None = None) -> Path:
         return Path(os.path.expanduser(acfg["oauth_token_file"]))
     from ..config import home
     p = home() / "claude-token"
-    legacy = Path(os.path.expanduser("~/.config/hiveswarm/claude-token"))
-    return legacy if (not p.exists() and legacy.exists()) else p
+    if p.exists():
+        return p
+    for legacy in ("~/.config/hiveswarm/claude-token", "~/.config/hivemind/claude-token"):
+        lp = Path(os.path.expanduser(legacy))
+        if lp.exists():
+            return lp
+    return p
 
 
 def read_token(acfg: dict[str, Any] | None = None) -> str | None:

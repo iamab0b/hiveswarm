@@ -10,8 +10,8 @@ Download from the [Releases page](https://github.com/iamab0b/hiveswarm/releases)
 
 | platform | file | notes |
 |---|---|---|
-| Windows 10/11 | `Hiveswarm-<version>-win-x64.exe` | the installer; a portable `.exe` is there too. The engine runs inside WSL2. |
-| macOS | `Hiveswarm-<version>-mac-arm64.dmg` / `-x64.dmg` | unsigned: the first time, right-click the app → Open |
+| Windows 10/11 | `Hiveswarm-Setup-<version>-win-x64.exe` | the installer; `Hiveswarm-<version>-win-x64-portable.exe` runs without installing. The engine runs inside WSL2. Unsigned: SmartScreen → More info → Run anyway |
+| macOS | `Hiveswarm-<version>-mac-arm64.dmg` (Apple silicon) / `-mac-x64.dmg` (Intel) | unsigned: the first time, right-click the app → Open |
 | Linux | `Hiveswarm-<version>-linux-x86_64.AppImage` or `.deb` | `chmod +x` the AppImage |
 
 Inside the environment where the engine runs (your WSL2 distro on Windows, the machine itself elsewhere) you need Python 3.11+ with `venv`, git and tmux, and the agent CLIs you want to use, signed in:
@@ -35,6 +35,12 @@ Every later launch skips to step 4, or to nothing at all if the engine is alread
 
 Then, once, in a terminal in the same environment: `hm login claude` so sessions never stop at Claude's sign-in screen.
 
+## Coming from Hivemind
+
+A laptop that ran the pre-rename Hivemind (`uv tool install hivemind`, `~/.config/hivemind/worker.toml`, the `hivemind-worker` and `hivemind-ui` user services) is picked up automatically on first run. The app runs `hm migrate`, which **copies** `worker.toml`, the Claude token and the hub URL and token into `~/.hiveswarm`. It keeps the existing mirrors (`~/hivemind-work`) and project copies (`~/hivemind`), so nothing is cloned again. It also stops and disables the old services so they don't run a second worker next to the app. Nothing is deleted. Afterwards `uv tool uninstall hivemind` removes the old program, and `~/.config/hivemind` can go once the app works.
+
+The hub has to run the same version: upgrade its daemon and decide service to the same release's wheel first. The new daemon reads the old `/opt/hivemind/config/config.toml`, database and `HIVEMIND_TOKEN` as they are, and still merges branches that older workers pushed as `hivemind/<id>`.
+
 ## Settings
 
 Open the boot screen from the tray menu ("Restart engine" shows it) or when the engine fails.
@@ -55,7 +61,7 @@ Closing the window hides the app in the tray (macOS: the Dock) and keeps the swa
 
 ## With a hub
 
-The app runs whatever `hm up` runs. On a laptop that talks to a hub, put `daemon_url` and `hub_ssh` in `~/.hiveswarm/worker.toml` and the hub's URL and token in `~/.hiveswarm/env` (see [two-machines.md](two-machines.md)); `hm up` then starts only a worker and the app locally. A hub with no desktop uses the wheel from the same release and the systemd units in `deploy/systemd/`.
+The app runs whatever `hm up` runs. `hm up` looks at `daemon_url` in `worker.toml`. If it points at another machine, only this machine's worker and the app start; the daemon and decide service are the hub's. Put `daemon_url` and `hub_ssh` in `~/.hiveswarm/worker.toml` and the hub's URL and token in `~/.hiveswarm/env` (see [two-machines.md](two-machines.md)), or let `hm migrate` do it from a Hivemind setup. If the hub is unreachable when the app starts (Wi-Fi still connecting, hub rebooting), the worker waits and retries instead of exiting, and the app shows "reconnecting" until it is back. A hub with no desktop uses the wheel from the same release and the systemd units in `deploy/systemd/`.
 
 ## Troubleshooting
 

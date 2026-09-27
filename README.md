@@ -44,7 +44,7 @@ The app keeps the swarm running while its window is open (or in the tray), stops
 ### The engine only (hubs, servers, the CLI)
 
 ```bash
-pip install --user ./hiveswarm-0.1.0-py3-none-any.whl
+pip install --user ./hiveswarm-0.1.1-py3-none-any.whl
 hm init --project myapp --repo ~/code/myapp
 hm up
 ```
@@ -103,7 +103,7 @@ A hub that holds repositories and runs the daemon, plus a laptop that runs the a
 
 ```bash
 # hub: the wheel from the release
-pip install --user ./hiveswarm-0.1.0-py3-none-any.whl && hm init --project myapp --repo ~/repos/myapp
+pip install --user ./hiveswarm-0.1.1-py3-none-any.whl && hm init --project myapp --repo ~/repos/myapp
 # in ~/.hiveswarm/config.toml: [daemon] host = "0.0.0.0", hub_ssh = "you@hub"
 hiveswarm-decide & hiveswarm-daemon
 

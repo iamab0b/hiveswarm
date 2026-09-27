@@ -77,7 +77,9 @@ async def local() -> dict[str, Any]:
     if S.tmux:
         r = subprocess.run(["tmux", "-L", TMUX_SOCKET, "has-session", "-t", TMUX_SESSION], capture_output=True)
         alive = r.returncode == 0
-    return {"hostname": S.hostname, "tmux": S.tmux, "tmux_alive": alive, "daemon": S.daemon}
+    from . import __version__
+    return {"product": "hiveswarm", "version": __version__, "hostname": S.hostname, "tmux": S.tmux,
+            "tmux_alive": alive, "daemon": S.daemon}
 
 
 # ── SSE: feed + state snapshots ──────────────────────────────────────────

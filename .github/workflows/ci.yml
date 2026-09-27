@@ -92,6 +92,37 @@ jobs:
       - run: npx electron-builder --linux AppImage --publish never
         working-directory: desktop
 
+  desktop-package:
+    needs: [test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: --win
+          - os: macos-latest
+            args: --mac dmg --arm64
+          - os: ubuntu-latest
+            args: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: pip install build && python -m build --wheel
+      - run: npm ci
+        working-directory: desktop
+      - run: npx electron-builder ${{ matrix.args }} --publish never
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
   package:
     runs-on: ubuntu-latest
     needs: [test]

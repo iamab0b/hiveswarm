@@ -68,6 +68,7 @@ jobs:
 
   release:
     needs: [wheel, desktop]
+    if: ${{ !cancelled() && needs.wheel.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -77,16 +78,22 @@ jobs:
         run: |
           mkdir -p out
           find artifacts -type f \( -name '*.whl' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' \) -exec cp {} out/ \;
+          [ "$(find out \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' \) | wc -l)" -gt 0 ] || { echo "no desktop build succeeded"; exit 1; }
+          {
+            echo "**Hiveswarm Desktop**: download the installer for your machine and open it. It installs the engine on first run (into WSL2 on Windows)."
+            echo "- Windows: \`Hiveswarm-Setup-<version>-win-x64.exe\` (installer) or \`Hiveswarm-<version>-win-x64-portable.exe\`"
+            echo "- macOS: \`Hiveswarm-<version>-mac-arm64.dmg\` (Apple silicon) or \`-mac-x64.dmg\` (Intel); unsigned, so right-click → Open the first time"
+            echo "- Linux: \`.AppImage\` or \`.deb\`"
+            echo
+            echo "**Engine only** (a hub, a server, or the CLI without the desktop app): \`pip install hiveswarm-<version>-py3-none-any.whl\`."
+            ls out/*.exe >/dev/null 2>&1 || echo "- ⚠️ The Windows build failed for this release; see the workflow run."
+            ls out/*.dmg >/dev/null 2>&1 || echo "- ⚠️ The macOS build failed for this release; see the workflow run."
+            ls out/*.AppImage >/dev/null 2>&1 || echo "- ⚠️ The Linux build failed for this release; see the workflow run."
+          } > notes.md
           cd out && sha256sum * > SHA256SUMS.txt && ls -la
       - uses: softprops/action-gh-release@v2
         with:
           files: out/*
           generate_release_notes: true
           draft: ${{ github.event_name == 'workflow_dispatch' }}
-          body: |
-            **Hiveswarm Desktop** — download the installer for your machine and open it; it installs the engine on first run (into WSL2 on Windows).
-            - Windows: `Hiveswarm-<version>-win-x64.exe` (installer) or the portable `.exe`
-            - macOS: `Hiveswarm-<version>-mac-<arch>.dmg` (unsigned: right-click → Open the first time)
-            - Linux: `.AppImage` or `.deb`
-
-            **Engine only** (a hub, a server, or the CLI without the desktop app): `pip install hiveswarm-<version>-py3-none-any.whl`.
+          body_path: notes.md

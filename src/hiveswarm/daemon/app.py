@@ -927,7 +927,7 @@ def task_diff(tid: str) -> dict[str, Any]:
     t = db.task_get(tid)
     if not t:
         raise HTTPException(status_code=404, detail="no such task")
-    branch = f"hiveswarm/{tid}"
+    branch = worktree.task_branch(tid, t["repo_path"])
     import subprocess
     r = subprocess.run(["git", "-C", t["repo_path"], "diff", f"{t['base_ref']}...{branch}", "--stat"],
                        capture_output=True, text=True, timeout=30)
@@ -945,7 +945,7 @@ def task_merge(tid: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="no such task")
     if t["state"] != "done":
         return {"ok": False, "reason": "only done tasks can be merged"}
-    branch = f"hiveswarm/{tid}"
+    branch = worktree.task_branch(tid, t["repo_path"])
     import subprocess
     cur = subprocess.run(["git", "-C", t["repo_path"], "rev-parse", "--abbrev-ref", "HEAD"],
                          capture_output=True, text=True, timeout=10).stdout.strip()

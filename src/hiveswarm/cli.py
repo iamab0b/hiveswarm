@@ -531,6 +531,11 @@ def cmd_up(a: argparse.Namespace) -> None:
     sys.exit(setup_cmd.up(ui=not a.no_ui, open_browser=not a.no_open, ui_port=a.ui_port))
 
 
+def cmd_migrate(a: argparse.Namespace) -> None:
+    from . import setup_cmd
+    setup_cmd.migrate(keep_services=a.keep_services)
+
+
 def cmd_version(a: argparse.Namespace) -> None:
     from . import __version__
     print(f"hiveswarm {__version__}")
@@ -550,7 +555,11 @@ def main() -> None:
     s.add_argument("--force", action="store_true", help="overwrite an existing config")
     s.set_defaults(fn=cmd_init)
 
-    s = sub.add_parser("up", help="run the decide service, daemon, worker and web app in this terminal")
+    s = sub.add_parser("migrate", help="bring a Hivemind laptop setup (~/.config/hivemind, hivemind-* services) into ~/.hiveswarm; copies, deletes nothing")
+    s.add_argument("--keep-services", action="store_true", help="leave the old hivemind-worker / hivemind-ui services running")
+    s.set_defaults(fn=cmd_migrate)
+
+    s = sub.add_parser("up", help="run what this machine needs: decide, daemon, worker and app (or only worker and app when the daemon is a remote hub)")
     s.add_argument("--no-ui", action="store_true")
     s.add_argument("--no-open", action="store_true", help="do not open the browser")
     s.add_argument("--ui-port", type=int, default=7790)

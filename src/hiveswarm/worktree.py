@@ -11,6 +11,19 @@ def _git(*args: str, cwd: str | None = None, check: bool = True) -> subprocess.C
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=120, check=check)
 
 
+BRANCH_PREFIXES = ("hiveswarm", "hivemind")
+
+
+def task_branch(task_id: str, repo_path: str) -> str:
+    """The task's branch on the hub. Workers from before the rename pushed hivemind/<id>; prefer the current name."""
+    for prefix in BRANCH_PREFIXES:
+        name = f"{prefix}/{task_id}"
+        r = _git("rev-parse", "--verify", "--quiet", f"refs/heads/{name}", cwd=repo_path, check=False)
+        if r.returncode == 0:
+            return name
+    return f"{BRANCH_PREFIXES[0]}/{task_id}"
+
+
 def create(task_id: str, repo_path: str, base_ref: str) -> str:
     root = Path(load().get("paths.worktrees"))
     root.mkdir(parents=True, exist_ok=True)
@@ -52,7 +65,8 @@ def remove(task_id: str, repo_path: str) -> None:
     root = Path(load().get("paths.worktrees"))
     wt = root / task_id
     _clear_dir(wt, repo_path)
-    _git("branch", "-D", f"hiveswarm/{task_id}", cwd=repo_path, check=False)
+    for prefix in BRANCH_PREFIXES:
+        _git("branch", "-D", f"{prefix}/{task_id}", cwd=repo_path, check=False)
 
 
 def diff_stat(wt: str) -> str:

@@ -16,7 +16,7 @@
 
 ## Publishing
 
-`.github/workflows/release.yml` runs on every `v*` tag: it builds the wheel, then Hiveswarm Desktop for Windows (NSIS installer + portable), Linux (AppImage + deb) and macOS (dmg, unsigned) with the wheel bundled, and creates the GitHub Release with all of them plus `SHA256SUMS.txt` and generated notes.
+`.github/workflows/release.yml` runs on every `v*` tag: it builds the wheel, then Hiveswarm Desktop for Windows (NSIS installer + portable), Linux (AppImage + deb) and macOS (dmg for Apple silicon and Intel, unsigned) with the wheel bundled, and creates the GitHub Release with them plus `SHA256SUMS.txt` and generated notes. If one platform fails, the release still publishes the others and its notes say which one is missing. CI's `desktop-package` job builds all three platforms on every push, so a packaging problem shows up before a tag.
 
 ```bash
 git tag -a v0.1.0 -m "Hiveswarm 0.1.0" && git push origin v0.1.0

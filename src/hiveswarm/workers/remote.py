@@ -427,12 +427,27 @@ def _adopt_sessions(client: Client, cfg: dict[str, Any], root: Path, host: str) 
         log.info("session %s: re-adopted tmux window %s", tid[:8], win)
 
 
+def _register(client: Client, body: dict[str, Any]) -> None:
+    """Register an agent, waiting for the hub if it is not reachable yet (a laptop that just woke up, a Wi-Fi
+    reconnect, the hub rebooting) instead of exiting."""
+    delay = 2.0
+    while True:
+        try:
+            client.post("/register", body, timeout=30)
+            return
+        except Exception as e:
+            log.warning("hub not reachable to register %s (%s); retrying in %.0f s", body["agent_id"], str(e)[:120], delay)
+            time.sleep(delay)
+            delay = min(delay * 2, 60.0)
+
+
 CLAIM_WAIT = 20  # seconds the daemon holds an idle claim before answering "nothing"; keeps idle traffic to ~3 requests/min/lane
 
 
 def _lane(client: Client, cfg: dict[str, Any], agent_id: str, poll: int, once: bool) -> None:
     wait = 0 if once else int(cfg.get("claim_wait_seconds", CLAIM_WAIT))
     while True:
+        t0 = time.monotonic()
         try:
             claim = client.post("/claim", {"agent_id": agent_id, "wait": wait}, timeout=wait + 30)
         except Exception as e:
@@ -449,7 +464,9 @@ def _lane(client: Client, cfg: dict[str, Any], agent_id: str, poll: int, once: b
             continue
         if once:
             return
-        time.sleep(1.0 if wait else poll)
+        held = time.monotonic() - t0
+        # A daemon from before long-polling answers at once; fall back to plain polling instead of hammering it.
+        time.sleep(1.0 if (wait and held >= wait / 2) else poll)
 
 
 def main() -> None:
@@ -528,7 +545,7 @@ def main() -> None:
         if SESSION_HOST is not None:
             caps.append("sessions")
         cap = max(1, int(acfg.get("concurrency", 1)))
-        client.post("/register", {"agent_id": agent_id, "host": host, "capabilities": caps, "capacity": cap})
+        _register(client, {"agent_id": agent_id, "host": host, "capabilities": caps, "capacity": cap})
         serving.append(agent_id)
         log.info("registered %s ×%d (%s)", agent_id, cap, ", ".join(caps))
 

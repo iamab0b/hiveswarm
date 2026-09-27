@@ -4,6 +4,24 @@ All notable changes to Hiveswarm. The format follows [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-09-27
+
+### Fixed
+- `hm up` on a laptop whose worker points at a remote hub started a second, empty daemon locally; it now starts only the worker and the app there (`hm up` prints which mode it is in). The desktop app inherits this.
+- `hm init` overwrote an existing `worker.toml`; it now refuses and points at `hm up` or `hm migrate`.
+- The desktop app found an older `hm` ahead of its own on PATH and failed or ran the wrong one; the engine's venv now always comes first, and `hm` is re-linked on every start.
+- The desktop app ran engine commands through `wsl.exe --`, which let a second shell expand the script; it now uses `wsl.exe -e`.
+- The desktop app used a non-interactive shell's PATH, missing agents installed through nvm, npm-global or `.bashrc`; it now captures the interactive shell's PATH (Windows directories under `/mnt` dropped).
+- Engine install failed on WSL distros whose `python3` is older than 3.11 (Ubuntu 22.04); it now uses uv (installing it if needed), which fetches a suitable Python.
+- A worker exited when the hub was unreachable at start-up; it now waits and retries registration, and `hm up` keeps the app running if the worker stops.
+- Workers long-polling an older daemon that answers claims at once polled every second; they now fall back to `poll_seconds`.
+- Release builds: the Linux `.deb` failed for lack of a package maintainer; the macOS `.dmg` failed because `dmg-license` (a macOS-only dependency) was missing from a lockfile generated on Linux; the Windows installer and portable `.exe` had the same file name. All three are fixed, CI now builds the desktop app on Windows, macOS and Linux on every push, and a release publishes the platforms that built even if one fails.
+
+### Added
+- `hm migrate`: copies a Hivemind laptop setup (`~/.config/hivemind`, the Claude token, the hub URL and token from the old services or shell) into `~/.hiveswarm`, keeps the old mirror and project-copy folders, and disables the old `hivemind-*` user services. The desktop app runs it automatically.
+- The daemon diffs and merges task branches pushed as `hivemind/<id>` by workers from before the rename.
+- `/api/local` reports `product` and `version`, so the desktop app can tell its own engine from an older one on the same port and replace it.
+
 ## [0.1.0] — 2026-09-26
 
 First public release, renamed from the private project "Hivemind" (the name was taken on PyPI).
@@ -35,5 +53,6 @@ First public release, renamed from the private project "Hivemind" (the name was 
 - Project deletion with optional purge; local copies of every project on each worker.
 - The web app (React, xterm.js) with Swarm, Lead, Inbox, Hive, Tasks, Stats and Agents pages, PWA install and a light theme.
 
-[Unreleased]: https://github.com/iamab0b/hiveswarm/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/iamab0b/hiveswarm/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/iamab0b/hiveswarm/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/iamab0b/hiveswarm/releases/tag/v0.1.0
