@@ -69,6 +69,29 @@ jobs:
       - run: playwright install --with-deps chromium
       - run: pytest -q -m e2e --timeout 300
 
+  desktop:
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: pip install build && python -m build --wheel
+      - run: npm ci
+        working-directory: desktop
+      - name: engine boots from the wheel (install, init, up, stop)
+        run: HIVESWARM_WHEEL_DIR=$GITHUB_WORKSPACE/dist PATH=$GITHUB_WORKSPACE/tests/fakes:$PATH npm test
+        working-directory: desktop
+      - run: npx electron-builder --linux AppImage --publish never
+        working-directory: desktop
+
   package:
     runs-on: ubuntu-latest
     needs: [test]

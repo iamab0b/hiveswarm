@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/*.whl
+
+  desktop:
+    needs: wheel
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: --win
+          - os: ubuntu-latest
+            args: --linux
+          - os: macos-latest
+            args: --mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist
+      - run: npm ci
+        working-directory: desktop
+      - run: npm test
+        working-directory: desktop
+      - run: npx electron-builder ${{ matrix.args }} --publish never
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+            desktop/release/*.dmg
+          if-no-files-found: error
+
+  release:
+    needs: [wheel, desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: collect
+        run: |
+          mkdir -p out
+          find artifacts -type f \( -name '*.whl' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' \) -exec cp {} out/ \;
+          cd out && sha256sum * > SHA256SUMS.txt && ls -la
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
+          draft: ${{ github.event_name == 'workflow_dispatch' }}
+          body: |
+            **Hiveswarm Desktop** — download the installer for your machine and open it; it installs the engine on first run (into WSL2 on Windows).
+            - Windows: `Hiveswarm-<version>-win-x64.exe` (installer) or the portable `.exe`
+            - macOS: `Hiveswarm-<version>-mac-<arch>.dmg` (unsigned: right-click → Open the first time)
+            - Linux: `.AppImage` or `.deb`
+
+            **Engine only** (a hub, a server, or the CLI without the desktop app): `pip install hiveswarm-<version>-py3-none-any.whl`.

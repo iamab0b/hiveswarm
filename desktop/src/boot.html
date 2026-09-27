@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hiveswarm</title>
+<style>
+  :root { color-scheme: dark; --bg: #0a0c10; --panel: #12161c; --line: #232a33; --ink: #e6e8ec; --muted: #8b93a1; --accent: #f0b64a; --bad: #ef6b73; --good: #4fc487; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+  header { display: flex; align-items: center; gap: 12px; padding: 18px 24px 8px; }
+  header svg { width: 26px; height: 26px; color: var(--accent); }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .state { margin-left: auto; font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--muted); }
+  header .state b { color: var(--ink); font-weight: 500; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 8px 24px; min-height: 0; }
+  .log { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow: auto; font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; color: #c9cfd8; }
+  .log .err { color: var(--bad); }
+  aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .card h2 { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  .detail { color: var(--ink); }
+  .detail.bad { color: var(--bad); }
+  label { display: block; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  input, select { width: 100%; background: #0d1117; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  button { background: #1a212b; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 7px 12px; font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); color: #1a1200; border-color: var(--accent); font-weight: 600; }
+  button:hover { filter: brightness(1.1); }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--ink); }
+  .check input { width: auto; }
+  footer { padding: 8px 24px 14px; color: var(--muted); font-size: 12px; }
+  footer a { color: var(--accent); }
+  .spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: s 0.9s linear infinite; vertical-align: -1px; margin-right: 6px; }
+  @keyframes s { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+  <h1>Hiveswarm</h1>
+  <div class="state"><span id="spin" class="spin"></span>engine: <b id="state">checking</b></div>
+</header>
+<main>
+  <div class="log" id="log"></div>
+  <aside>
+    <div class="card">
+      <h2>Status</h2>
+      <div class="detail" id="detail">looking for the engine…</div>
+      <div class="row">
+        <button class="primary" id="retry">Start / retry</button>
+        <button id="stop">Stop engine</button>
+        <button id="openlog">Open log file</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Settings</h2>
+      <div id="wsl">
+        <label for="distro">WSL distro</label>
+        <select id="distro"></select>
+        <label for="user">WSL user (blank = default)</label>
+        <input id="user" placeholder="e.g. sahil">
+      </div>
+      <label for="port">App port</label>
+      <input id="port" type="number" min="1024" max="65535">
+      <label for="shell">Shell (advanced; blank = bash -lc)</label>
+      <input id="shell" placeholder="bash -lc">
+      <label class="check"><input type="checkbox" id="keepRunning"> keep the swarm running when I close the app</label>
+      <label class="check"><input type="checkbox" id="openAtLogin"> open Hiveswarm when I sign in</label>
+      <div class="row"><button id="save">Save and restart engine</button></div>
+    </div>
+    <div class="card">
+      <h2>What this does</h2>
+      <div style="color: var(--muted); font-size: 12.5px">On first run it installs the Hiveswarm engine into <code>~/.hiveswarm/venv</code> (inside WSL on Windows), writes a config with a demo project, and starts the decide service, the daemon, a worker and the app. After that, opening Hiveswarm is enough: the engine starts with it.</div>
+    </div>
+  </aside>
+</main>
+<footer>Hiveswarm Desktop <span id="version"></span> · <a href="#" id="docs">documentation</a> · agents need to be installed and signed in inside the same environment (<code>hm login claude</code> for Claude Code)</footer>
+<script>
+  const api = window.hiveswarmDesktop;
+  const $ = (id) => document.getElementById(id);
+  const logEl = $("log");
+  function addLine(line) {
+    const div = document.createElement("div");
+    if (/error|failed|traceback|unreachable/i.test(line)) div.className = "err";
+    div.textContent = line;
+    logEl.appendChild(div);
+    while (logEl.childElementCount > 400) logEl.removeChild(logEl.firstChild);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function setState(s) {
+    $("state").textContent = s.state;
+    $("detail").textContent = s.detail || "";
+    $("detail").className = "detail" + (s.state === "failed" ? " bad" : "");
+    $("spin").style.display = ["checking", "installing", "initialising", "starting"].includes(s.state) ? "inline-block" : "none";
+  }
+  api.onState(setState);
+  api.onLog(addLine);
+  api.status().then((s) => { setState(s); (s.lines || []).forEach(addLine); });
+  api.settings().then((s) => {
+    $("version").textContent = "v" + s.version;
+    if (s.platform !== "win32") $("wsl").style.display = "none";
+    const sel = $("distro");
+    sel.innerHTML = "";
+    const opt = document.createElement("option"); opt.value = ""; opt.textContent = "(default distro)"; sel.appendChild(opt);
+    (s.distros || []).forEach((d) => { const o = document.createElement("option"); o.value = d; o.textContent = d; sel.appendChild(o); });
+    sel.value = s.distro || "";
+    $("user").value = s.user || "";
+    $("port").value = s.port;
+    $("shell").value = s.shell || "";
+    $("keepRunning").checked = !!s.keepRunning;
+    $("openAtLogin").checked = !!s.openAtLogin;
+  });
+  $("retry").onclick = () => api.retry();
+  $("stop").onclick = () => api.stop();
+  $("openlog").onclick = () => api.openLog();
+  $("docs").onclick = (e) => { e.preventDefault(); api.openExternal("https://github.com/iamab0b/hiveswarm/blob/main/docs/desktop.md"); };
+  $("save").onclick = async () => {
+    await api.saveSettings({ distro: $("distro").value, user: $("user").value.trim(), port: Number($("port").value), shell: $("shell").value.trim(),
+      keepRunning: $("keepRunning").checked, openAtLogin: $("openAtLogin").checked });
+    api.retry();
+  };
+</script>
+</body>
+</html>
