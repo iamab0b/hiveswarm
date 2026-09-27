@@ -52,7 +52,7 @@ def main() -> int:
                                       "origin": "you", "agent": ["claude_code", "codex"][i % 2]})
             done.append(r["id"])
         for tid in done:
-            stack.wait_for(lambda: stack.state(tid) in ("done", "failed"), 120, "history task")
+            stack.wait_for(lambda t=tid: stack.state(t) in ("done", "failed"), 120, "history task")
         failing = stack.post("/tasks", {"project": "demo", "spec": "Make the tests fail on purpose", "acceptance": "false", "origin": "you"})["id"]
         stack.wait_for(lambda: stack.state(failing) == "failed", 200, "the failing task")
 
@@ -111,7 +111,7 @@ def main() -> int:
             pg.screenshot(path=str(OUT / "09-new-goal.png"))
             pg.keyboard.press("Escape")
             shot("/stats", "30-stats-performance.png")
-            shot(f"/lead/demo", "20-lead-chat.png", 3000)
+            shot("/lead/demo", "20-lead-chat.png", 3000)
             shot(f"/sessions/{b}", "24-session-standing-orders.png", 2500)
             try:
                 pg.click("button:has-text(\"Standing orders\")", timeout=3000)
