@@ -120,7 +120,7 @@ The table name is the agent id shown everywhere; `adapter` picks the implementat
 | `adapter` | the table name | all | `claude_code`, `codex`, `cursor`, `gemini`, `antigravity`, `opencode`, or a plugin ([adapters.md](adapters.md)) |
 | `enabled` | `true` | all | |
 | `binary` | adapter's default | all | executable to look for on PATH |
-| `concurrency` | `1` | all | parallel lanes for this agent |
+| `concurrency` | `1` | all | parallel lanes for this agent at start; the Agents page and `hm agents --set` change the live count (see below) |
 | `timeout` | `1800` | all | seconds per headless attempt |
 | `model` | agent's default | all | passed through to the CLI |
 | `config_dir` | `~/.claude-worker` | claude_code | a separate Claude config so swarm sessions never touch your own |
@@ -131,6 +131,18 @@ The table name is the agent id shown everywhere; `adapter` picks the implementat
 | `force` | `false` | cursor | `cursor-agent --force` |
 | `yolo` | `true` | gemini | `gemini --yolo` |
 | `pty` | `false` | antigravity | run under a pseudo-terminal |
+
+### Live lane counts
+
+`concurrency` is the number of lanes a worker starts with. The number it runs is changed while it runs, without a restart, from the Agents page (the +/− control on each agent's card) or the CLI:
+
+```bash
+hm agents --set claude_code 5
+hm agents --set codex 0
+hm agents --set claude_code auto
+```
+
+The daemon stores the wanted count per agent and every worker running that agent checks for it every 10 seconds: new lanes start claiming at once, surplus lanes stop claiming and exit after the task they are on finishes. `0` pauses an agent (nothing is routed to it until a lane is back); `auto` (or `config`/`reset`) drops the override, and the worker goes back to `concurrency`. The limit is 32 lanes per agent. The Agents page shows "applying…" until the worker has caught up and warns when more than six lanes share one provider sign-in, since the provider's rate limits apply to all of them together. A worker that restarts asks the daemon for the wanted count before starting its lanes, so the setting survives restarts and upgrades.
 
 ## Environment variables
 

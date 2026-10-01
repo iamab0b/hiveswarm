@@ -45,6 +45,11 @@ class Register(BaseModel):
     host: str | None = None
     capabilities: list[str] = []
     capacity: int = 1
+    provider: str | None = None  # the adapter behind this agent; lanes of one provider share its usage limit
+
+
+class CapacityIn(BaseModel):
+    capacity: int | None = None  # 0..32 lanes; null = back to the worker's own config
 
 
 class Claim(BaseModel):
@@ -271,8 +276,21 @@ def agents() -> list[dict[str, Any]]:
 
 @app.post("/register", dependencies=[Depends(_auth)])
 def register(r: Register) -> dict[str, Any]:
-    db.agent_register(r.agent_id, r.host, r.capabilities, r.capacity)
-    return {"ok": True}
+    row = db.agent_register(r.agent_id, r.host, r.capabilities, r.capacity, r.provider)
+    return {"ok": True, "desired_capacity": row["desired_capacity"] if row else None}
+
+
+@app.post("/agents/{agent_id}/capacity", dependencies=[Depends(_auth)])
+def agent_capacity(agent_id: str, c: CapacityIn) -> dict[str, Any]:
+    """Set how many lanes an agent should run. The worker picks it up within a few seconds, starts or retires lanes
+    (a retiring lane finishes its current task first) and re-registers; `capacity` in GET /agents shows what is
+    actually running, `desired_capacity` what was asked for."""
+    if c.capacity is not None and not (0 <= c.capacity <= 32):
+        raise HTTPException(status_code=400, detail="capacity must be between 0 and 32 lanes")
+    row = db.agent_set_desired_capacity(agent_id, c.capacity)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such agent")
+    return {"ok": True, "agent_id": agent_id, "capacity": row["capacity"], "desired_capacity": row["desired_capacity"]}
 
 
 @app.post("/unregister", dependencies=[Depends(_auth)])

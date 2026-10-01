@@ -209,6 +209,46 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Any:
 
 
 @pytest.fixture(scope="session")
+def app_server(stack: Stack) -> Any:
+    """The packaged web app served against the test stack; `app_server.url` is its address."""
+    port = free_port()
+    out = open(stack.home / "ui.log", "ab")
+    p = subprocess.Popen([sys.executable, "-c", f"from hiveswarm.ui_server import main; main(port={port}, open_browser=False)"],
+                         env=stack.env, stdout=out, stderr=subprocess.STDOUT)
+    url = f"http://127.0.0.1:{port}"
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            if httpx.get(url + "/", timeout=2).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.3)
+    try:
+        yield type("AppServer", (), {"url": url, "port": port, "proc": p})()
+    finally:
+        p.terminate()
+
+
+@pytest.fixture
+def page(app_server: Any) -> Any:
+    """A Playwright page on the app (e2e tests; needs Chromium or HIVESWARM_E2E_CHROMIUM)."""
+    pw = pytest.importorskip("playwright.sync_api")
+    with pw.sync_playwright() as play:
+        exe = os.environ.get("HIVESWARM_E2E_CHROMIUM")
+        b = play.chromium.launch(executable_path=exe) if exe else play.chromium.launch()
+        pg = b.new_page(viewport={"width": 1400, "height": 900})
+        errors: list[str] = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.errors = errors  # type: ignore[attr-defined]
+        pg.base = app_server.url  # type: ignore[attr-defined]
+        try:
+            yield pg
+        finally:
+            b.close()
+        assert not errors, errors
+
+
+@pytest.fixture(scope="session")
 def tmux_available() -> bool:
     return shutil.which("tmux") is not None
 

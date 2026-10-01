@@ -143,6 +143,8 @@ export interface Agent {
   last_seen: number;
   registered_at: number;
   capacity: number;
+  desired_capacity?: number | null;
+  provider?: string | null;
   alive: boolean;
   busy: number;
 }

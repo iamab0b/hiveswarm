@@ -45,7 +45,7 @@ def conn() -> sqlite3.Connection:
 
 
 _COLUMNS = {
-    "agents": [("capacity", "INTEGER NOT NULL DEFAULT 1")],
+    "agents": [("capacity", "INTEGER NOT NULL DEFAULT 1"), ("desired_capacity", "INTEGER"), ("provider", "TEXT")],
     "tasks": [("kind", "TEXT NOT NULL DEFAULT 'task'"), ("session", "TEXT"), ("preferred_agent", "TEXT"), ("flags", "TEXT")],
     "attempts": [("steps", "INTEGER"), ("step_avg_s", "REAL"), ("step_p90_s", "REAL"), ("step_max_s", "REAL"),
                  ("slow_steps", "INTEGER"), ("silence_max_s", "REAL"), ("first_action_s", "REAL"), ("think_avg_s", "REAL")],
@@ -204,17 +204,30 @@ def agent_retire(agent_id: str) -> None:
     run("UPDATE agents SET last_seen = 0 WHERE agent_id = ?", agent_id)
 
 
-def agent_register(agent_id: str, host: str | None, capabilities: list[str], capacity: int = 1) -> None:
+def agent_register(agent_id: str, host: str | None, capabilities: list[str], capacity: int = 1,
+                   provider: str | None = None) -> sqlite3.Row | None:
+    """Record a worker's agent with the lanes it actually runs. `desired_capacity` (set from the app) is kept across
+    registrations; the worker reads it from the returned row and sizes its lanes to match."""
     t = now()
     import json as _json
     with tx() as c:
         c.execute(
-            """INSERT INTO agents (agent_id, host, capabilities, last_seen, registered_at, capacity)
-               VALUES (?, ?, ?, ?, ?, ?)
+            """INSERT INTO agents (agent_id, host, capabilities, last_seen, registered_at, capacity, provider)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(agent_id) DO UPDATE SET host=excluded.host, capabilities=excluded.capabilities,
-                 last_seen=excluded.last_seen, capacity=excluded.capacity""",
-            (agent_id, host, _json.dumps(capabilities), t, t, max(1, int(capacity))),
+                 last_seen=excluded.last_seen, capacity=excluded.capacity,
+                 provider=COALESCE(excluded.provider, agents.provider)""",
+            (agent_id, host, _json.dumps(capabilities), t, t, max(0, int(capacity)), provider),
         )
+    return one("SELECT * FROM agents WHERE agent_id = ?", agent_id)
+
+
+def agent_set_desired_capacity(agent_id: str, capacity: int | None) -> sqlite3.Row | None:
+    """What the human wants: how many lanes this agent should run. None goes back to the worker's own config."""
+    if one("SELECT 1 FROM agents WHERE agent_id = ?", agent_id) is None:
+        return None
+    run("UPDATE agents SET desired_capacity = ? WHERE agent_id = ?", capacity, agent_id)
+    return one("SELECT * FROM agents WHERE agent_id = ?", agent_id)
 
 
 def agent_touch(agent_id: str) -> None:
@@ -379,12 +392,22 @@ def busy_counts() -> dict[str, int]:
 
 
 def agent_capacities() -> dict[str, int]:
-    return {r["agent_id"]: int(r["capacity"] or 1) for r in all_("SELECT agent_id, capacity FROM agents")}
+    """Lanes the router may fill per agent: what the worker runs, capped by what the human asked for (so a cut
+    takes effect the moment it is requested, before the worker has retired the lane)."""
+    out: dict[str, int] = {}
+    for r in all_("SELECT agent_id, capacity, desired_capacity FROM agents"):
+        cap = int(r["capacity"] if r["capacity"] is not None else 1)
+        if r["desired_capacity"] is not None:
+            cap = min(cap, int(r["desired_capacity"]))
+        out[r["agent_id"]] = cap
+    return out
 
 
 def busy_agents() -> set[str]:
+    """Agents with no free lane right now; an agent with zero lanes is always busy."""
     caps = agent_capacities()
-    return {a for a, n in busy_counts().items() if n >= caps.get(a, 1)}
+    busy = busy_counts()
+    return {a for a, cap in caps.items() if busy.get(a, 0) >= cap}
 
 
 def requeue_orphans(agents: list[str]) -> list[str]:

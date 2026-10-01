@@ -3,7 +3,7 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { Activity, Bot, ListChecks, BarChart3, Filter } from "lucide-react";
 import { api } from "@/lib/api";
 import { useStore } from "@/lib/store";
-import type { AgentStatus, AgentTable, Task } from "@/lib/types";
+import type { Agent, AgentStatus, AgentTable, Task } from "@/lib/types";
 import { age, agentColor, agentLabel, classifyEntry, cn, firstLine, fmtPct, fmtSecs, isLive, sessionOf, short, taskAgent } from "@/lib/utils";
 import { AgentChip, EmptyState, StatusBadge, TaskKindIcon, taskHref } from "@/components/bits";
 import { StateBadge } from "@/components/ui/badge";
@@ -225,10 +225,62 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "su
   );
 }
 
+const MAX_LANES = 32;
+const CROWDED_LANES = 6;
+
+/** Lanes an agent is asked to run: the app's number when one is set, else what worker.toml started. */
+function wantedLanes(a: Agent): number {
+  return a.desired_capacity ?? a.capacity ?? 1;
+}
+
+function LaneControl({ a, providerLanes }: { a: Agent; providerLanes: number }) {
+  const [pending, setPending] = useState<number | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const wanted = pending === undefined ? wantedLanes(a) : pending ?? a.capacity;
+  const applying = pending !== undefined || (a.desired_capacity != null && a.desired_capacity !== a.capacity);
+  useEffect(() => {
+    if (pending === undefined) return;
+    if (pending === null ? a.desired_capacity == null : a.desired_capacity === pending) setPending(undefined);
+  }, [a.desired_capacity, pending]);
+  const set = (n: number | null) => {
+    setError(null);
+    setPending(n);
+    api.setCapacity(a.agent_id, n).catch((e) => { setError(String(e.message || e)); setPending(undefined); });
+  };
+  const crowded = providerLanes > CROWDED_LANES;
+  return (
+    <div className="mt-3 rounded-md bg-surface-2 px-2.5 py-2">
+      <div className="flex items-center gap-2">
+        <span className="text-[12px] text-muted">lanes</span>
+        <div className="ml-auto flex items-center gap-1">
+          <Button size="icon-sm" variant="outline" aria-label="fewer lanes" disabled={wanted <= 0} onClick={() => set(wanted - 1)}>−</Button>
+          <span className="num w-7 text-center text-[13px] font-semibold text-fg">{wanted}</span>
+          <Button size="icon-sm" variant="outline" aria-label="more lanes" disabled={wanted >= MAX_LANES} onClick={() => set(wanted + 1)}>+</Button>
+        </div>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11.5px] text-dim">
+        <span className="num">{a.busy || 0} / {a.capacity ?? 1} busy</span>
+        {applying ? <span className="text-warn">applying…</span> : wanted === 0 ? <span className="text-warn">paused</span> : null}
+        {a.desired_capacity != null && !applying ? <button type="button" className="text-accent hover:underline" onClick={() => set(null)}>back to worker.toml</button> : null}
+        {error ? <span className="text-danger">{error}</span> : null}
+      </div>
+      {crowded ? <div className="mt-1 text-[11.5px] text-warn">{providerLanes} lanes share one {a.provider || a.agent_id} sign-in; its rate limits apply to all of them.</div> : null}
+    </div>
+  );
+}
+
 export function AgentsPage() {
   const agents = useStore((s) => s.agents);
   const tasks = useStore((s) => s.tasks);
   const now = Date.now() / 1000;
+  const lanesByProvider = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const a of agents) {
+      const p = a.provider || a.agent_id;
+      m[p] = (m[p] || 0) + wantedLanes(a);
+    }
+    return m;
+  }, [agents]);
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-5xl px-6 py-5">
@@ -244,10 +296,10 @@ export function AgentsPage() {
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-1 text-[12px] text-muted">
                   <span>host</span><span className="mono text-fg">{a.host || "—"}</span>
-                  <span>lanes</span><span className="num text-fg">{a.busy || 0} / {a.capacity || 1} busy</span>
                   <span>last seen</span><span className="text-fg">{age(a.last_seen, now)} ago</span>
                   <span>can do</span><span className="text-fg">{(a.capabilities || []).join(", ")}</span>
                 </div>
+                <LaneControl a={a} providerLanes={lanesByProvider[a.provider || a.agent_id] || 0} />
                 {working.length ? (
                   <div className="mt-3 grid gap-1">
                     {working.map((t) => (

@@ -45,6 +45,8 @@ export const api = {
   feed: (p: { since?: number; tail?: number }) => req<{ entries: FeedEntry[]; last_id: number }>("GET", "/feed", undefined, p),
   inbox: () => req<{ items: InboxItem[]; count: number }>("GET", "/inbox"),
   agents: () => req<Agent[]>("GET", "/agents"),
+  setCapacity: (agent: string, capacity: number | null) =>
+    req<{ ok: boolean; capacity: number; desired_capacity: number | null }>("POST", `/agents/${agent}/capacity`, { capacity }),
   stats: () => req<StatRow[]>("GET", "/stats"),
   agentStats: () => req<AgentTable>("GET", "/stats/agents"),
   live: (id: string) => req<LiveStep>("GET", `/tasks/${id}/live`),

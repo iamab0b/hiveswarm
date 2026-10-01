@@ -121,14 +121,22 @@ def cmd_tui(a: argparse.Namespace) -> None:
 
 
 def cmd_agents(a: argparse.Namespace) -> None:
+    if getattr(a, "set", None):
+        agent, value = a.set
+        cap = None if value in ("auto", "config", "reset") else int(value)
+        _post(f"/agents/{agent}/capacity", {"capacity": cap})
+        want = "the worker's own config" if cap is None else f"{cap} lanes"
+        print(f"{agent}: asked for {want}; the worker applies it within ~10 s (hm agents shows lanes as they change)")
+        return
     rows = _get("/agents")
     if not rows:
         print("no agents registered")
         return
-    print(f"{'agent':14} {'host':16} {'alive':6} {'busy':8} capabilities")
+    print(f"{'agent':14} {'host':16} {'alive':6} {'busy':8} {'wanted':7} capabilities")
     for r in rows:
         busy = f"{r.get('busy', 0)}/{r.get('capacity', 1)}"
-        print(f"{r['agent_id']:14} {(r['host'] or '')[:16]:16} {'yes' if r['alive'] else 'no':6} {busy:8} {', '.join(r['capabilities'])}")
+        wanted = "-" if r.get("desired_capacity") is None else str(r["desired_capacity"])
+        print(f"{r['agent_id']:14} {(r['host'] or '')[:16]:16} {'yes' if r['alive'] else 'no':6} {busy:8} {wanted:7} {', '.join(r['capabilities'])}")
 
 
 def cmd_stats(a: argparse.Namespace) -> None:
@@ -593,7 +601,8 @@ def main() -> None:
     s = sub.add_parser("stats", help="routing table")
     s.set_defaults(fn=cmd_stats)
 
-    s = sub.add_parser("agents", help="registered workers and liveness")
+    s = sub.add_parser("agents", help="registered agents, their lanes and liveness; --set changes an agent's lanes live")
+    s.add_argument("--set", nargs=2, metavar=("AGENT", "LANES"), help="e.g. --set claude_code 5, or --set codex auto for the worker's config")
     s.set_defaults(fn=cmd_agents)
 
     s = sub.add_parser("tui", help="interactive dashboard")

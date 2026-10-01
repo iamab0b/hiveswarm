@@ -6,7 +6,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -106,39 +105,14 @@ def test_env_var_compat_shim(tmp_path):
 
 
 @pytest.mark.e2e
-def test_web_app_renders(stack):
+def test_web_app_renders(page):
     """The packaged app serves and its pages render (needs `playwright install chromium`)."""
-    pw = pytest.importorskip("playwright.sync_api")
-    from conftest import free_port
-    port = free_port()
-    out = open(stack.home / "ui.log", "ab")
-    p = subprocess.Popen([sys.executable, "-c", f"from hiveswarm.ui_server import main; main(port={port}, open_browser=False)"],
-                         env=stack.env, stdout=out, stderr=subprocess.STDOUT)
-    try:
-        deadline = time.time() + 30
-        import httpx
-        while time.time() < deadline:
-            try:
-                if httpx.get(f"http://127.0.0.1:{port}/", timeout=2).status_code == 200:
-                    break
-            except httpx.HTTPError:
-                time.sleep(0.3)
-        with pw.sync_playwright() as play:
-            exe = os.environ.get("HIVESWARM_E2E_CHROMIUM")
-            b = play.chromium.launch(executable_path=exe) if exe else play.chromium.launch()
-            pg = b.new_page(viewport={"width": 1400, "height": 900})
-            errors: list[str] = []
-            pg.on("pageerror", lambda e: errors.append(str(e)))
-            pg.goto(f"http://127.0.0.1:{port}/", wait_until="load")
-            pg.wait_for_timeout(2500)
-            assert pg.locator("text=Swarm").first.is_visible()
-            pg.goto(f"http://127.0.0.1:{port}/stats", wait_until="load")
-            pg.wait_for_timeout(2000)
-            assert pg.locator("text=Agent performance").first.is_visible()
-            pg.goto(f"http://127.0.0.1:{port}/lead/demo", wait_until="load")
-            pg.wait_for_timeout(2000)
-            assert pg.locator("text=Lead").first.is_visible()
-            b.close()
-            assert not errors, errors
-    finally:
-        p.terminate()
+    page.goto(page.base + "/", wait_until="load")
+    page.wait_for_timeout(2500)
+    assert page.locator("text=Swarm").first.is_visible()
+    page.goto(page.base + "/stats", wait_until="load")
+    page.wait_for_timeout(2000)
+    assert page.locator("text=Agent performance").first.is_visible()
+    page.goto(page.base + "/lead/demo", wait_until="load")
+    page.wait_for_timeout(2000)
+    assert page.locator("text=Lead").first.is_visible()

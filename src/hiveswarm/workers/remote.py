@@ -427,14 +427,14 @@ def _adopt_sessions(client: Client, cfg: dict[str, Any], root: Path, host: str) 
         log.info("session %s: re-adopted tmux window %s", tid[:8], win)
 
 
-def _register(client: Client, body: dict[str, Any]) -> None:
+def _register(client: Client, body: dict[str, Any]) -> dict[str, Any]:
     """Register an agent, waiting for the hub if it is not reachable yet (a laptop that just woke up, a Wi-Fi
-    reconnect, the hub rebooting) instead of exiting."""
+    reconnect, the hub rebooting) instead of exiting. Returns the daemon's answer (it carries `desired_capacity`)."""
     delay = 2.0
     while True:
         try:
-            client.post("/register", body, timeout=30)
-            return
+            out = client.post("/register", body, timeout=30)
+            return out if isinstance(out, dict) else {}
         except Exception as e:
             log.warning("hub not reachable to register %s (%s); retrying in %.0f s", body["agent_id"], str(e)[:120], delay)
             time.sleep(delay)
@@ -444,9 +444,13 @@ def _register(client: Client, body: dict[str, Any]) -> None:
 CLAIM_WAIT = 20  # seconds the daemon holds an idle claim before answering "nothing"; keeps idle traffic to ~3 requests/min/lane
 
 
-def _lane(client: Client, cfg: dict[str, Any], agent_id: str, poll: int, once: bool) -> None:
+def _lane(client: Client, cfg: dict[str, Any], agent_id: str, poll: int, once: bool,
+          retire: threading.Event | None = None) -> None:
+    """One polling lane. `retire` (set by the lane manager when capacity shrinks) ends the loop at the next idle
+    moment: a task that was already claimed still runs to completion."""
     wait = 0 if once else int(cfg.get("claim_wait_seconds", CLAIM_WAIT))
-    while True:
+    retire = retire or threading.Event()
+    while not retire.is_set():
         t0 = time.monotonic()
         try:
             claim = client.post("/claim", {"agent_id": agent_id, "wait": wait}, timeout=wait + 30)
@@ -455,7 +459,7 @@ def _lane(client: Client, cfg: dict[str, Any], agent_id: str, poll: int, once: b
             claim = None
             if once:
                 return
-            time.sleep(poll)
+            retire.wait(poll)
             continue
         if claim:
             run_one(client, cfg, agent_id, claim)
@@ -466,7 +470,78 @@ def _lane(client: Client, cfg: dict[str, Any], agent_id: str, poll: int, once: b
             return
         held = time.monotonic() - t0
         # A daemon from before long-polling answers at once; fall back to plain polling instead of hammering it.
-        time.sleep(1.0 if (wait and held >= wait / 2) else poll)
+        retire.wait(1.0 if (wait and held >= wait / 2) else poll)
+
+
+class LaneManager:
+    """Keeps each agent at its target number of lanes while the worker runs, so the count can be changed from the
+    app (POST /agents/{id}/capacity) without a restart. Growing starts threads; shrinking retires the newest lanes,
+    each of which finishes its current task before exiting. Every change is re-registered with the daemon."""
+
+    def __init__(self, client: Client, cfg: dict[str, Any], host: str, poll: int, once: bool):
+        self.client = client
+        self.cfg = cfg
+        self.host = host
+        self.poll = poll
+        self.once = once
+        self.lanes: dict[str, list[tuple[threading.Thread, threading.Event]]] = {}
+        self.meta: dict[str, dict[str, Any]] = {}  # agent_id -> {"caps": [...], "provider": str, "configured": int}
+        self.lock = threading.Lock()
+
+    def add_agent(self, agent_id: str, caps: list[str], provider: str, configured: int) -> None:
+        self.meta[agent_id] = {"caps": caps, "provider": provider, "configured": configured}
+        self.lanes.setdefault(agent_id, [])
+
+    def count(self, agent_id: str) -> int:
+        return sum(1 for t, r in self.lanes.get(agent_id, []) if t.is_alive() and not r.is_set())
+
+    def register(self, agent_id: str) -> dict[str, Any]:
+        m = self.meta[agent_id]
+        return _register(self.client, {"agent_id": agent_id, "host": self.host, "capabilities": m["caps"],
+                                       "capacity": self.count(agent_id), "provider": m["provider"]})
+
+    def set_target(self, agent_id: str, target: int) -> None:
+        target = max(0, min(int(target), 32))
+        with self.lock:
+            live = [(t, r) for t, r in self.lanes.get(agent_id, []) if t.is_alive() and not r.is_set()]
+            while len(live) < target:
+                r = threading.Event()
+                i = len(live)
+                t = threading.Thread(target=_lane, args=(self.client, self.cfg, agent_id, self.poll, self.once, r),
+                                     name=f"lane-{agent_id}-{i}", daemon=True)
+                t.start()
+                live.append((t, r))
+                time.sleep(0.2)
+            while len(live) > target:
+                t, r = live.pop()
+                r.set()
+            self.lanes[agent_id] = live
+
+    def apply(self, agent_id: str, desired: int | None, announce: bool = True) -> None:
+        target = int(desired) if desired is not None else int(self.meta[agent_id]["configured"])
+        before = self.count(agent_id)
+        if before == target:
+            return
+        self.set_target(agent_id, target)
+        self.register(agent_id)
+        if announce:
+            log.info("%s: %d → %d lanes (%s)", agent_id, before, target,
+                     "set from the app" if desired is not None else "back to worker.toml")
+
+    def watch(self, stop: threading.Event, every: float = 10.0) -> None:
+        """Poll the daemon for desired capacities; one small request every `every` seconds."""
+        while not stop.wait(every):
+            try:
+                rows = self.client.get("/agents", timeout=20) or []
+            except Exception:
+                continue
+            for row in rows:
+                aid = row.get("agent_id")
+                if aid in self.meta:
+                    self.apply(aid, row.get("desired_capacity"))
+
+    def threads(self) -> list[threading.Thread]:
+        return [t for ls in self.lanes.values() for t, _ in ls]
 
 
 def main() -> None:
@@ -529,6 +604,7 @@ def main() -> None:
 
     wanted = a.agent or list((cfg.get("agents") or {}).keys()) or list(adapters.ADAPTERS.keys())
     serving: list[str] = []
+    manager = LaneManager(client, cfg, host, poll, a.once)
     for agent_id in wanted:
         acfg = (cfg.get("agents") or {}).get(agent_id, {})
         if acfg.get("enabled", True) is False:
@@ -544,8 +620,14 @@ def main() -> None:
         caps = list(adapters.CAPABILITIES.get(acfg.get("adapter", agent_id), []))
         if SESSION_HOST is not None:
             caps.append("sessions")
-        cap = max(1, int(acfg.get("concurrency", 1)))
-        _register(client, {"agent_id": agent_id, "host": host, "capabilities": caps, "capacity": cap})
+        cap = max(0, int(acfg.get("concurrency", 1)))
+        manager.add_agent(agent_id, caps, adapter_name, cap)
+        ans = _register(client, {"agent_id": agent_id, "host": host, "capabilities": caps, "capacity": cap, "provider": adapter_name})
+        desired = ans.get("desired_capacity")
+        if desired is not None and int(desired) != cap:
+            log.info("%s: %d lanes in worker.toml, %d set from the app; using %d", agent_id, cap, int(desired), int(desired))
+            cap = int(desired)
+        manager.meta[agent_id]["start"] = cap
         serving.append(agent_id)
         log.info("registered %s ×%d (%s)", agent_id, cap, ", ".join(caps))
 
@@ -556,12 +638,9 @@ def main() -> None:
     if SESSION_HOST is not None:
         _adopt_sessions(client, cfg, root, host)
 
-    lanes = []
-    for agent_id in serving:
-        cap = max(1, int(((cfg.get("agents") or {}).get(agent_id, {})).get("concurrency", 1)))
-        lanes += [(agent_id, i) for i in range(cap)]
-    log.info("polling %s every %ss; %d parallel lanes: %s", cfg["daemon_url"], poll, len(lanes),
-             ", ".join(f"{a}×{sum(1 for x in lanes if x[0] == a)}" for a in serving))
+    total = sum(int(manager.meta[aid]["start"]) for aid in serving)
+    log.info("polling %s every %ss; %d parallel lanes: %s", cfg["daemon_url"], poll, total,
+             ", ".join(f"{aid}×{manager.meta[aid]['start']}" for aid in serving))
     from .local_copy import LocalCopies
     copies = LocalCopies(client, cfg, host)
     if copies.enabled and not a.once:
@@ -570,7 +649,6 @@ def main() -> None:
                          name="local-copies", daemon=True).start()
     else:
         log.info("local project copies are off (local_projects = \"\" in worker.toml)")
-    threads = []
     def _retire(*_: Any) -> None:
         for agent_id in serving:
             try:
@@ -586,13 +664,18 @@ def main() -> None:
     import signal as _signal
     _signal.signal(_signal.SIGTERM, _on_term)
     try:
-        for agent_id, i in lanes:
-            t = threading.Thread(target=_lane, args=(client, cfg, agent_id, poll, a.once), name=f"lane-{agent_id}-{i}", daemon=True)
-            t.start()
-            threads.append(t)
-            time.sleep(min(1.0, poll / max(len(lanes), 1)))
-        for t in threads:
-            t.join()
+        for agent_id in serving:
+            manager.set_target(agent_id, int(manager.meta[agent_id]["start"]))
+            manager.register(agent_id)
+        stop_watch = threading.Event()
+        if not a.once:
+            threading.Thread(target=manager.watch, args=(stop_watch,), name="lane-manager", daemon=True).start()
+        if a.once:
+            for t in manager.threads():
+                t.join()
+        else:
+            while True:
+                time.sleep(3600)
     except KeyboardInterrupt:
         log.info("stopping")
         _retire()

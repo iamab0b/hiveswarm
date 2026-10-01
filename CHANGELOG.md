@@ -4,6 +4,9 @@ All notable changes to Hiveswarm. The format follows [Keep a Changelog](https://
 
 ## [Unreleased]
 
+### Added
+- Live lane counts: the Agents page (+/− on each card) and `hm agents --set <agent> <n|auto>` change how many parallel lanes an agent runs while the worker runs — new lanes start claiming at once, surplus lanes exit after their current task; `0` pauses an agent; the setting survives worker restarts. `POST /agents/{id}/capacity`, `desired_capacity` and `provider` on `GET /agents`.
+
 ## [0.1.1] — 2026-09-27
 
 ### Fixed
