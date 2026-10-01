@@ -5,7 +5,7 @@ import threading
 import traceback
 from typing import Any
 
-from .. import advisor, db, perf, rulesets, sessions, worktree
+from .. import advisor, db, memory, perf, rulesets, sessions, worktree
 from ..classify import classify_task, diff_band
 from ..config import load, load_current
 from ..router import roundrobin as router
@@ -202,6 +202,12 @@ def finalize(tid: str, cls: dict[str, Any] | None, agent: str, passed: bool, wei
         w = weight * (0.5 if cls.get("source") == "fallback" else 1.0)
         db.stats_update(agent, cls["task_type"], diff_band(cls["difficulty"]), passed, w,
                         None, None, att["wall_seconds"] if att else None)
+    if memory.enabled() and (fresh["kind"] != "session" or not passed):  # sessions that succeed are the human's own story
+        lesson = memory.lesson_from_attempt(fresh, att, cls, passed)
+        if lesson:
+            r = memory.remember(lesson[0], fresh["project"], False, lesson[1], "daemon")
+            if r.get("ok"):
+                db.log_append(tid, "daemon", "remembered: " + lesson[0][:200])
     if passed:
         db.task_set_state(tid, "done", claimed_by=None, lease_expires=None)
         db.log_append(tid, "daemon", f"done — branch hiveswarm/{tid} ready to merge")

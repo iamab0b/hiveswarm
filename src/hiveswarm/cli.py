@@ -162,6 +162,25 @@ def cmd_deferred(a: argparse.Namespace) -> None:
         print("nothing deferred" + (f" in {a.project}" if a.project else "") + "; agents report shortcuts under Deferred in their handoff and they land here")
 
 
+def cmd_recall(a: argparse.Namespace) -> None:
+    r = _get("/memory/recall", q=a.query, project=a.project, limit=a.limit)
+    items = r.get("items") or []
+    if r.get("backend") == "none":
+        print("memory is off: set [memory] backend = \"local\" (or \"hindsight\") in config.toml")
+        return
+    if not items:
+        print("nothing remembered matches")
+        return
+    for it in items:
+        scope = "" if it.get("scope") in (None, "global") else f" [{it['scope']}]"
+        print(f"- {it['text']}{scope}")
+
+
+def cmd_remember(a: argparse.Namespace) -> None:
+    r = _post("/memory/remember", {"text": a.text, "project": a.project, "global_scope": bool(a.global_scope), "by": "you"})
+    print("remembered" + (f" for {a.project}" if a.project and not a.global_scope else " globally") if r.get("ok") else f"not stored: {r.get('reason')}")
+
+
 def cmd_stats(a: argparse.Namespace) -> None:
     t = _get("/stats/agents")
     cells = t.get("cells") or []
@@ -629,6 +648,18 @@ def main() -> None:
 
     s = sub.add_parser("stats", help="routing table")
     s.set_defaults(fn=cmd_stats)
+
+    s = sub.add_parser("recall", help="what the swarm learned that matches a query (needs [memory] backend)")
+    s.add_argument("query")
+    s.add_argument("--project", default=None)
+    s.add_argument("--limit", type=int, default=8)
+    s.set_defaults(fn=cmd_recall)
+
+    s = sub.add_parser("remember", help="keep a lesson for next time: hm remember \"...\" --project NAME, or --global")
+    s.add_argument("text")
+    s.add_argument("--project", default=None)
+    s.add_argument("--global", dest="global_scope", action="store_true")
+    s.set_defaults(fn=cmd_remember)
 
     s = sub.add_parser("deferred", help="the deferred ledger: shortcuts agents reported in their handoffs; --resolve ID closes one")
     s.add_argument("project", nargs="?", default=None)

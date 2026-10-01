@@ -19,7 +19,9 @@ Four companion skills go deeper; read the one that matches the step you are on:
 ## Loop
 
 1. **Orient**: `hm_status`, `hm_projects`, and skim the repo you are in (it is a worktree of the project).
-   `hm_stats` tells you which agents pass which kinds of work.
+   `hm_stats` tells you which agents pass which kinds of work. `hm_recall(query, project)` tells you what the
+   swarm learned on this kind of work before (failed attempts and why, what landed); read it before you plan,
+   and `hm_remember` a lesson the human states or that a wave taught you.
 2. **Plan**: split the goal into independent, verifiable tasks (2–8 is typical; one is fine). Each task must be
    doable in its own fresh worktree from the same base commit — no task may depend on another task's output. If the
    work is sequential, run it in waves: dispatch wave 1, wait, merge, then dispatch wave 2 on the merged base.
@@ -96,7 +98,7 @@ Four companion skills go deeper; read the one that matches the step you are on:
 
 
 def lead_prompt(goal: str, project: str, acceptance: str | None = None, persistent: bool = False,
-                plan: str | None = None, briefs: list[str] | None = None) -> str:
+                plan: str | None = None, briefs: list[str] | None = None, learned: str = "") -> str:
     who = (
         f"You are the standing Hiveswarm lead for project `{project}`. The human talks to you in the Hiveswarm app; "
         "this conversation continues across many requests, so after each one report briefly and wait for the next."
@@ -160,4 +162,7 @@ def lead_prompt(goal: str, project: str, acceptance: str | None = None, persiste
     if briefs:
         parts += ["", "## Briefs from the advisor waiting for you"] + [f"- {b.strip()}" for b in briefs[:5]] + [
             "Act on them first, then hm_resume(project)."]
+    if learned:
+        parts += ["", learned, "hm_recall(query, project) finds more before you plan; hm_remember(text, project) keeps a lesson "
+                  "worth having next time (the daemon stores failures and landed work by itself)."]
     return "\n".join(parts)

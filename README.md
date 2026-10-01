@@ -126,6 +126,7 @@ With the hub configured, the desktop app starts only a worker and the app on the
 - [docs/craft.md](docs/craft.md) — the Craft ruleset every agent works under: the ladder, tests, the handoff, the deferred ledger, the untested flag
 - [docs/profiles.md](docs/profiles.md) — agent profiles (model + effort per `[agents.*]` table, edited live from the app), and per-project rosters
 - [docs/advisor.md](docs/advisor.md) — the advisor: talk about the plan beside the lead; pause, brief, resume
+- [docs/memory.md](docs/memory.md) — memory across tasks: a local full-text index or a Hindsight server; lessons the lead and advisor recall
 - [docs/adapters.md](docs/adapters.md) — add your own agent as a plugin
 - [docs/architecture.md](docs/architecture.md) — how the pieces talk, the data model, the routing math
 - [DESIGN.md](DESIGN.md) — how the app looks and behaves: tokens, components, page patterns, what not to do

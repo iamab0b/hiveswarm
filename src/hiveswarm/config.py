@@ -45,6 +45,10 @@ DEFAULTS: dict[str, Any] = {
     "workers.prime_agent.enabled": False,
     "rulesets.default": "craft",
     "rulesets.intensity": "standard",
+    "memory.backend": "none",
+    "memory.hindsight.url": "http://127.0.0.1:8888",
+    "memory.hindsight.budget": "low",
+    "memory.hindsight.bank_prefix": "hiveswarm",
 }
 
 

@@ -80,6 +80,9 @@ silence_minutes = 2
 [workers.prime_agent]
 enabled = false
 
+[memory]
+backend = "local"
+
 [projects.demo]
 repo_path = "{self.repo}"
 """)

@@ -102,6 +102,16 @@ The token is not in the file: set `HIVESWARM_TOKEN` (in `~/.hiveswarm/env`). Wit
 
 Changes to `config.toml` are picked up without a restart. [craft.md](craft.md) has the rules, the handoff format, the deferred ledger and the `untested` flag.
 
+### `[memory]`
+
+| key | default | |
+|---|---|---|
+| `backend` | `"none"` | `"local"` (full-text index in the daemon's database) or `"hindsight"` (a Hindsight server); see [memory.md](memory.md) |
+| `hindsight.url` | `http://127.0.0.1:8888` | |
+| `hindsight.token` | none | bearer token if the server requires one |
+| `hindsight.budget` | `"low"` | recall effort: `low`, `mid`, `high` |
+| `hindsight.bank_prefix` | `"hiveswarm"` | banks are `<prefix>-<project>` and `<prefix>-global` |
+
 ### `[workers.prime_agent]`, `[workers.local_direct]`, `[inference]`
 
 Optional hub-local lanes for a machine that runs a model itself. `prime_agent` drives a coding agent inside a Docker container (`container`, `worktree_mount`, `timeout_seconds`, `extra_args`); `local_direct` asks a bare model at `inference.url` (`model`, `max_tokens`, `timeout_seconds`) for a diff. Both default to `enabled = false`; the router only considers them when enabled and reachable.

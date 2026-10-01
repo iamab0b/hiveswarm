@@ -387,6 +387,21 @@ def hm_brief(project: str, text: str) -> dict[str, Any]:
     return _post(f"/projects/{project}/briefs", {"text": text, "by": ORIGIN or ROLE})
 
 
+@tool(advisor=True)
+def hm_recall(query: str, project: str | None = None, limit: int = 8) -> dict[str, Any]:
+    """What the swarm learned before that matches the query: failed attempts and why, work that landed, lessons
+    the human or the lead stored. The project's memories and the global ones, best first. Empty when memory is
+    off ([memory] backend in config.toml)."""
+    return _get("/memory/recall", q=query, project=project, limit=limit)
+
+
+@tool(advisor=True)
+def hm_remember(text: str, project: str | None = None, global_scope: bool = False) -> dict[str, Any]:
+    """Keep a lesson for next time (one or two sentences: the situation and what to do). Project-scoped unless
+    global_scope is true; the daemon already stores failures and finished work on its own."""
+    return _post("/memory/remember", {"text": text, "project": project, "global_scope": global_scope, "by": ORIGIN or ROLE})
+
+
 @tool()
 def hm_briefs(project: str) -> list[dict[str, Any]]:
     """Briefs for the lead on this project, newest first, with whether each was delivered."""

@@ -35,6 +35,7 @@ For Claude Code: `claude mcp add hiveswarm -- hiveswarm-mcp`. `HIVESWARM_ORIGIN`
 | tasks | `hm_advise`, `hm_add_tasks`, `hm_wait`, `hm_diff`, `hm_merge` (`acknowledge_untested` for a flagged task), `hm_retry`, `hm_cancel`, `hm_delete` |
 | craft | `hm_deferred`, `hm_deferred_resolve` — the deferred ledger agents fill from their handoffs ([craft.md](craft.md)) |
 | plan and advisor | `hm_plan`, `hm_plan_get`, `hm_pause`, `hm_resume`, `hm_brief`, `hm_briefs` — the plan on file, pausing a project, briefs between the advisor and the lead ([advisor.md](advisor.md)); `HIVESWARM_ROLE=advisor` limits the server to the read-only tools plus these |
+| memory | `hm_recall`, `hm_remember` — what the swarm learned before, when `[memory]` is on ([memory.md](memory.md)) |
 | sessions | `hm_new_session`, `hm_sessions`, `hm_inbox`, `hm_send`, `hm_approve`, `hm_deny`, `hm_answer`, `hm_finish`, `hm_continue` |
 | standing orders | `hm_directive`, `hm_directives`, `hm_directive_clear`, `hm_clear_flag` |
 

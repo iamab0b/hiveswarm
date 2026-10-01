@@ -411,6 +411,16 @@ class SessionHost:
             live.done.set()
         return outcome
 
+    def _learned(self, project: str, query: str) -> str:
+        """Memories that match the lead's goal, as a prompt block ("" when memory is off or nothing matches)."""
+        try:
+            from .. import memory as _memory
+            r = self.client.get("/memory/recall", timeout=15, q=query[:500], project=project, limit=6) or {}
+            return _memory.prompt_block(r.get("items") or [])
+        except Exception as e:
+            log.debug("recall for %s: %s", project, e)
+            return ""
+
     def _lead_context(self, project: str) -> tuple[str | None, list[str]]:
         """The stored plan and the advisor's undelivered briefs, for a lead that is starting or resuming."""
         plan, briefs = None, []
@@ -433,7 +443,8 @@ class SessionHost:
             note = (sess.get("resume_note") or "").strip()
             plan, briefs = self._lead_context(task["project"])
             return _lead.lead_prompt(note or "Continue where we left off; check hm_status for the state of the swarm.",
-                                     task["project"], None, persistent=bool(sess.get("persistent")), plan=plan, briefs=briefs)
+                                     task["project"], None, persistent=bool(sess.get("persistent")), plan=plan, briefs=briefs,
+                                     learned=self._learned(task["project"], note or task["spec"]))
         if resumed:
             note = (sess.get("resume_note") or "").strip()
             parts = ["The user reopened this session in Hiveswarm. The worktree still has your changes."]
@@ -444,7 +455,7 @@ class SessionHost:
         if sess.get("lead"):
             plan, briefs = self._lead_context(task["project"])
             return _lead.lead_prompt(task["spec"], task["project"], task.get("acceptance"), persistent=bool(sess.get("persistent")),
-                                     plan=plan, briefs=briefs)
+                                     plan=plan, briefs=briefs, learned=self._learned(task["project"], task["spec"]))
         from .. import directives as _directives
         block = _directives.prompt_block(self.directives_for(task["id"]))
         parts = ([block] if block else []) + [task["spec"].strip()]

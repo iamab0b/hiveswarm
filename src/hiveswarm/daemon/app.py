@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import advisor, db, directives, overlaps, perf, rulesets, sessions, worktree
+from .. import advisor, db, directives, memory, overlaps, perf, rulesets, sessions, worktree
 from .. import projects as projects_mod
 from ..config import env_secret, load, load_current
 from . import dispatcher
@@ -631,6 +631,33 @@ def advisor_forget(name: str) -> dict[str, Any]:
     return {"ok": True}
 
 
+# ── memory ──────────────────────────────────────────────────────────────
+
+class RememberIn(BaseModel):
+    text: str
+    project: str | None = None
+    global_scope: bool = False
+    tags: list[str] = []
+    by: str | None = None
+
+
+@app.get("/memory", dependencies=[Depends(_auth)])
+def memory_status() -> dict[str, Any]:
+    return memory.get().status()
+
+
+@app.get("/memory/recall", dependencies=[Depends(_auth)])
+def memory_recall(q: str, project: str | None = None, limit: int = 8) -> dict[str, Any]:
+    """What the swarm learned that matches `q`: the project's memories and the global ones, best first."""
+    return {"backend": memory.get().name, "items": memory.recall(q, project, max(1, min(limit, 50)))}
+
+
+@app.post("/memory/remember", dependencies=[Depends(_auth)])
+def memory_remember(body: RememberIn) -> dict[str, Any]:
+    r = memory.remember(body.text, body.project, body.global_scope, body.tags, body.by)
+    return {**r, "backend": memory.get().name}
+
+
 @app.get("/stats/rulesets", dependencies=[Depends(_auth)])
 def stats_rulesets() -> dict[str, Any]:
     """Finished attempts with and without a ruleset: pass rate, lines changed, wall time, untested count."""
@@ -812,7 +839,8 @@ async def session_commands(request: Request, host: str, wait: float = 0, advisor
         turns = await asyncio.to_thread(advisor.turn_take, host) if advisor_ok else []
         for t in turns:
             plan = advisor.plan_get(t["project"])
-            t["system_prompt"] = advisor.system_prompt(t["project"], plan["text"] if plan else None, advisor.paused(t["project"]))
+            learned = memory.prompt_block(memory.recall(t["text"], t["project"], 6)) if memory.enabled() else ""
+            t["system_prompt"] = advisor.system_prompt(t["project"], plan["text"] if plan else None, advisor.paused(t["project"]), learned)
         if cmds or turns or _time.time() >= deadline:
             return {"commands": cmds, "advisor": turns}
         await asyncio.sleep(0.5)

@@ -30,7 +30,7 @@ Adapted from i-have-adhd (MIT). The human is busy and the swarm is running; ever
 9. No preamble, no recap, no closers, no apologies, no emoji."""
 
 
-def system_prompt(project: str, plan: str | None, paused: dict[str, Any] | None) -> str:
+def system_prompt(project: str, plan: str | None, paused: dict[str, Any] | None, learned: str = "") -> str:
     parts = [
         f"You are the Hiveswarm advisor for project `{project}`. The human talks to you in the Hiveswarm app about the "
         "plan and the swarm's work while the lead agent keeps running. You never edit code and never dispatch work; the "
@@ -54,6 +54,8 @@ def system_prompt(project: str, plan: str | None, paused: dict[str, Any] | None)
         parts += ["", "## Current plan", plan.strip()[:6000]]
     if paused:
         parts += ["", f"## The project is paused (by {paused.get('paused_by') or 'someone'}: {paused.get('reason') or 'no reason given'})"]
+    if learned:
+        parts += ["", learned, "hm_recall(query, project) finds more; hm_remember keeps a lesson the human states."]
     return "\n".join(parts)
 
 
