@@ -6,7 +6,7 @@ from typing import Any
 
 from .. import db, perf
 from ..classify import diff_band
-from ..config import load
+from ..config import load, load_current
 from ..workers import local_direct, prime_agent
 
 _lock = threading.Lock()
@@ -67,12 +67,33 @@ def _capable(agent_row: Any, cls: dict[str, Any] | None) -> bool:
     return True
 
 
+def roster(project: str) -> list[str]:
+    """`projects.<name>.agents`: when set, only these agents (or agents of these providers) take the project's work."""
+    try:
+        return [str(a) for a in (load_current().project(project).get("agents") or [])]
+    except Exception:
+        return []
+
+
+def _on_roster(agent_id: str, names: list[str], providers: dict[str, str]) -> bool:
+    return agent_id in names or providers.get(agent_id, agent_id) in names
+
+
 def choose(task: Any, cls: dict[str, Any] | None, busy: set[str] | None = None) -> str | None:
     global _cursor
     busy = busy or set()
     alive = db.agents_alive()
     candidates = [a["agent_id"] for a in alive if _capable(a, cls)]
     candidates += _local_lanes(cls)
+
+    names = roster(task["project"])
+    if names and candidates:
+        providers = db.agent_providers()
+        kept = [c for c in candidates if _on_roster(c, names, providers)]
+        if kept:
+            candidates = kept
+        else:
+            REASONS[task["id"]] = "roster: none of " + ", ".join(names) + " is alive; using any agent"
 
     if not candidates:
         candidates = [prime_agent.AGENT] if prime_agent.available() else [local_direct.AGENT]
@@ -82,7 +103,12 @@ def choose(task: Any, cls: dict[str, Any] | None, busy: set[str] | None = None) 
     if preferred and preferred not in tried:
         if preferred in candidates:
             return None if preferred in busy else preferred
+    note = REASONS.get(task["id"])
     candidates = _probation_filter(task["id"], candidates, cls)
+    if note and task["id"] in REASONS and REASONS[task["id"]] != note:
+        REASONS[task["id"]] = note + "; " + REASONS[task["id"]]
+    elif note:
+        REASONS[task["id"]] = note
     untried = [c for c in candidates if c not in tried]
     pool = untried if untried else candidates
     idle = [c for c in pool if c not in busy]

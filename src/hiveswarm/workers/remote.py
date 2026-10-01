@@ -24,14 +24,43 @@ log = logging.getLogger("hiveswarm.worker")
 SESSION_HOST: SessionHost | None = None
 
 
-def _load_cfg(path: str | None) -> dict[str, Any]:
+def _cfg_path(path: str | None) -> Path:
     candidates = [path, os.environ.get("HIVESWARM_WORKER_CONFIG"), str(Path.home() / ".hiveswarm" / "worker.toml"),
                   str(Path.home() / ".config" / "hiveswarm" / "worker.toml"), str(Path.home() / ".config" / "hivemind" / "worker.toml")]
     for c in candidates:
         if c and Path(c).is_file():
-            with open(c, "rb") as f:
-                return tomllib.load(f)
+            return Path(c)
     raise FileNotFoundError("no worker.toml found; run `hm init` or see docs/config.md")
+
+
+def _load_cfg(path: str | None) -> dict[str, Any]:
+    p = _cfg_path(path)
+    with open(p, "rb") as f:
+        cfg = tomllib.load(f)
+    cfg["_path"] = str(p)
+    cfg["_mtime"] = p.stat().st_mtime
+    return cfg
+
+
+def agent_profile(agent_id: str, acfg: dict[str, Any], session_host: bool) -> dict[str, Any] | None:
+    """What a `[agents.<name>]` table means for registration, or None (with a reason logged) when it cannot run here."""
+    if acfg.get("enabled", True) is False:
+        return None
+    adapter_name = acfg.get("adapter", agent_id)
+    if adapter_name not in adapters.ADAPTERS:
+        log.warning("skipping %s: unknown adapter %r (available: %s)", agent_id, adapter_name, ", ".join(sorted(adapters.ADAPTERS)))
+        return None
+    binary = acfg.get("binary") or adapters.BINARIES.get(adapter_name, agent_id)
+    if not shutil.which(binary):
+        log.warning("skipping %s: %s not on PATH", agent_id, binary)
+        return None
+    caps = list(adapters.CAPABILITIES.get(adapter_name, []))
+    if session_host:
+        caps.append("sessions")
+    if acfg.get("effort") and adapter_name not in adapters.EFFORT_FLAGS:
+        log.info("%s: the %s CLI has no effort setting; `effort` is ignored", agent_id, adapter_name)
+    return {"caps": caps, "provider": adapter_name, "configured": max(0, int(acfg.get("concurrency", 1))),
+            "model": acfg.get("model"), "effort": acfg.get("effort")}
 
 
 class Client:
@@ -490,8 +519,9 @@ class LaneManager:
         self.meta: dict[str, dict[str, Any]] = {}  # agent_id -> {"caps": [...], "provider": str, "configured": int}
         self.lock = threading.Lock()
 
-    def add_agent(self, agent_id: str, caps: list[str], provider: str, configured: int) -> None:
-        self.meta[agent_id] = {"caps": caps, "provider": provider, "configured": configured}
+    def add_agent(self, agent_id: str, caps: list[str], provider: str, configured: int,
+                  model: str | None = None, effort: str | None = None) -> None:
+        self.meta[agent_id] = {"caps": caps, "provider": provider, "configured": configured, "model": model, "effort": effort}
         self.lanes.setdefault(agent_id, [])
 
     def count(self, agent_id: str) -> int:
@@ -500,7 +530,63 @@ class LaneManager:
     def register(self, agent_id: str) -> dict[str, Any]:
         m = self.meta[agent_id]
         return _register(self.client, {"agent_id": agent_id, "host": self.host, "capabilities": m["caps"],
-                                       "capacity": self.count(agent_id), "provider": m["provider"]})
+                                       "capacity": self.count(agent_id), "provider": m["provider"],
+                                       "model": m.get("model"), "effort": m.get("effort")})
+
+    def reload(self) -> list[str]:
+        """Re-read worker.toml's `[agents.*]` tables and apply the difference: new profiles start lanes and
+        register, removed or disabled ones retire and unregister, changed ones (model, effort, lanes) take effect
+        for the next task. Returns a list of what changed."""
+        try:
+            fresh = _load_cfg(self.cfg.get("_path"))
+        except Exception as e:
+            log.warning("worker.toml reload failed: %s", e)
+            return []
+        new_agents = fresh.get("agents") or {}
+        changes: list[str] = []
+        with self.lock:
+            self.cfg.setdefault("agents", {})
+            self.cfg["agents"].clear()
+            self.cfg["agents"].update(new_agents)
+            self.cfg["_mtime"] = fresh.get("_mtime")
+        want: dict[str, dict[str, Any]] = {}
+        for aid, acfg in new_agents.items():
+            prof = agent_profile(aid, acfg, SESSION_HOST is not None)
+            if prof:
+                want[aid] = prof
+        for aid in list(self.meta):
+            if aid not in want:
+                self.set_target(aid, 0)
+                try:
+                    self.client.post("/unregister", {"agent_id": aid})
+                except Exception:
+                    pass
+                self.meta.pop(aid, None)
+                changes.append(f"{aid} removed")
+        try:
+            rows = self.client.get("/agents", timeout=20) or []
+            desired_by_agent = {r.get("agent_id"): r.get("desired_capacity") for r in rows}
+        except Exception:
+            desired_by_agent = {}
+        for aid, prof in want.items():
+            old = self.meta.get(aid)
+            desired = desired_by_agent.get(aid)
+            if old is None:
+                self.add_agent(aid, prof["caps"], prof["provider"], prof["configured"], prof["model"], prof["effort"])
+                self.set_target(aid, int(desired) if desired is not None else prof["configured"])
+                self.register(aid)
+                changes.append(f"{aid} added ×{self.count(aid)}")
+                continue
+            diff = {k: prof[k] for k in ("model", "effort", "configured") if old.get(k) != prof[k]}
+            if diff:
+                old.update(prof)
+                if "configured" in diff:
+                    self.set_target(aid, int(desired) if desired is not None else prof["configured"])
+                self.register(aid)
+                changes.append(f"{aid} " + ", ".join(f"{k}={v}" for k, v in diff.items()))
+        if changes:
+            log.info("worker.toml changed: %s", "; ".join(changes))
+        return changes
 
     def set_target(self, agent_id: str, target: int) -> None:
         target = max(0, min(int(target), 32))
@@ -531,8 +617,17 @@ class LaneManager:
                      "set from the app" if desired is not None else "back to worker.toml")
 
     def watch(self, stop: threading.Event, every: float = 10.0) -> None:
-        """Poll the daemon for desired capacities; one small request every `every` seconds."""
+        """Poll the daemon for desired capacities (one small request every `every` seconds) and re-read
+        worker.toml when its modification time changes."""
+        path = self.cfg.get("_path")
         while not stop.wait(every):
+            try:
+                now_m = os.path.getmtime(path) if path else None
+            except OSError:
+                now_m = None
+            if path and now_m != self.cfg.get("_mtime"):
+                self.cfg["_mtime"] = now_m
+                self.reload()
             try:
                 rows = self.client.get("/agents", timeout=20) or []
             except Exception:
@@ -609,29 +704,21 @@ def main() -> None:
     manager = LaneManager(client, cfg, host, poll, a.once)
     for agent_id in wanted:
         acfg = (cfg.get("agents") or {}).get(agent_id, {})
-        if acfg.get("enabled", True) is False:
+        prof = agent_profile(agent_id, acfg, SESSION_HOST is not None)
+        if prof is None:
             continue
-        adapter_name = acfg.get("adapter", agent_id)
-        if adapter_name not in adapters.ADAPTERS:
-            log.warning("skipping %s: unknown adapter %r (available: %s)", agent_id, adapter_name, ", ".join(sorted(adapters.ADAPTERS)))
-            continue
-        binary = acfg.get("binary") or adapters.BINARIES.get(adapter_name, agent_id)
-        if not shutil.which(binary):
-            log.warning("skipping %s: %s not on PATH", agent_id, binary)
-            continue
-        caps = list(adapters.CAPABILITIES.get(acfg.get("adapter", agent_id), []))
-        if SESSION_HOST is not None:
-            caps.append("sessions")
-        cap = max(0, int(acfg.get("concurrency", 1)))
-        manager.add_agent(agent_id, caps, adapter_name, cap)
-        ans = _register(client, {"agent_id": agent_id, "host": host, "capabilities": caps, "capacity": cap, "provider": adapter_name})
+        caps, adapter_name, cap = prof["caps"], prof["provider"], prof["configured"]
+        manager.add_agent(agent_id, caps, adapter_name, cap, prof["model"], prof["effort"])
+        ans = _register(client, {"agent_id": agent_id, "host": host, "capabilities": caps, "capacity": cap, "provider": adapter_name,
+                                 "model": prof["model"], "effort": prof["effort"]})
         desired = ans.get("desired_capacity")
         if desired is not None and int(desired) != cap:
             log.info("%s: %d lanes in worker.toml, %d set from the app; using %d", agent_id, cap, int(desired), int(desired))
             cap = int(desired)
         manager.meta[agent_id]["start"] = cap
         serving.append(agent_id)
-        log.info("registered %s ×%d (%s)", agent_id, cap, ", ".join(caps))
+        label = adapter_name + (f" {prof['model']}" if prof["model"] else "") + (f" effort={prof['effort']}" if prof["effort"] else "")
+        log.info("registered %s ×%d (%s; %s)", agent_id, cap, label, ", ".join(caps))
 
     if not serving:
         log.error("no agents available; nothing to do")
@@ -652,7 +739,7 @@ def main() -> None:
     else:
         log.info("local project copies are off (local_projects = \"\" in worker.toml)")
     def _retire(*_: Any) -> None:
-        for agent_id in serving:
+        for agent_id in list(manager.meta):
             try:
                 client.post("/unregister", {"agent_id": agent_id})
             except Exception:

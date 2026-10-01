@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import pty
+import re
 import secrets
 import shutil
 import signal
@@ -135,6 +136,82 @@ async def events(request: Request) -> StreamingResponse:
             await asyncio.sleep(feed_every)
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── agent profiles (this machine's worker.toml) ───────────────────────────
+
+EFFORTS = {"claude_code": ["low", "medium", "high", "xhigh", "max"], "codex": ["minimal", "low", "medium", "high", "xhigh"]}
+
+
+@app.get("/api/local/profiles")
+async def local_profiles() -> dict[str, Any]:
+    """The `[agents.*]` tables of this machine's worker.toml, with what each adapter supports."""
+    from .workers import adapters
+    from .workers.remote import _cfg_path
+    adapters.load_plugins()
+    try:
+        path = _cfg_path(None)
+    except FileNotFoundError:
+        return {"ok": False, "reason": "no worker.toml on this machine", "profiles": [], "adapters": []}
+    cfg = _worker_cfg()
+    profiles = []
+    for name, acfg in (cfg.get("agents") or {}).items():
+        adapter = acfg.get("adapter", name)
+        binary = acfg.get("binary") or adapters.BINARIES.get(adapter, name)
+        profiles.append({"name": name, "adapter": adapter, "model": acfg.get("model"), "effort": acfg.get("effort"),
+                         "concurrency": int(acfg.get("concurrency", 1)), "enabled": acfg.get("enabled", True) is not False,
+                         "installed": bool(shutil.which(binary)), "binary": binary})
+    avail = [{"name": a, "installed": bool(shutil.which(adapters.BINARIES.get(a, a))), "efforts": EFFORTS.get(a, []),
+              "effort_supported": a in adapters.EFFORT_FLAGS} for a in sorted(adapters.ADAPTERS)]
+    return {"ok": True, "path": str(path), "host": S.hostname, "profiles": profiles, "adapters": avail}
+
+
+@app.post("/api/local/profiles")
+async def local_profile_set(request: Request) -> dict[str, Any]:
+    """Create or change an `[agents.<name>]` table; the worker on this machine applies it within ~10 s."""
+    from . import tomledit
+    from .workers import adapters
+    from .workers.remote import _cfg_path
+    body = await request.json()
+    name = str(body.get("name") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", name):
+        return {"ok": False, "reason": "name: letters, digits, - and _ only"}
+    try:
+        path = _cfg_path(None)
+    except FileNotFoundError:
+        return {"ok": False, "reason": "no worker.toml on this machine"}
+    adapters.load_plugins()
+    current = (tomledit.read(path).get("agents") or {}).get(name) or {}
+    adapter = str(body.get("adapter") or current.get("adapter") or name)
+    if adapter not in adapters.ADAPTERS:
+        return {"ok": False, "reason": f"unknown adapter {adapter}"}
+    updates: dict[str, Any] = {"adapter": adapter}
+    for key in ("model", "effort"):
+        if key in body:
+            v = (body.get(key) or "").strip() if isinstance(body.get(key), str) else body.get(key)
+            updates[key] = v or None
+    if "concurrency" in body:
+        updates["concurrency"] = max(0, min(32, int(body.get("concurrency") or 1)))
+    if "enabled" in body:
+        updates["enabled"] = None if body.get("enabled") else False
+    if updates.get("effort") and updates["effort"] not in (EFFORTS.get(adapter) or [updates["effort"]]):
+        return {"ok": False, "reason": f"effort for {adapter}: {', '.join(EFFORTS.get(adapter, []))}"}
+    tomledit.update_section(path, f"agents.{name}", updates)
+    return {"ok": True, "name": name, "path": str(path), "note": "the worker on this machine applies it within about 10 seconds"}
+
+
+@app.delete("/api/local/profiles/{name}")
+async def local_profile_delete(name: str) -> dict[str, Any]:
+    from . import tomledit
+    from .workers.remote import _cfg_path
+    try:
+        path = _cfg_path(None)
+    except FileNotFoundError:
+        return {"ok": False, "reason": "no worker.toml on this machine"}
+    if name not in (tomledit.read(path).get("agents") or {}):
+        return {"ok": False, "reason": "no such profile"}
+    tomledit.write_section(path, f"agents.{name}", None)
+    return {"ok": True, "name": name}
 
 
 # ── local project copies (this machine) ───────────────────────────────────

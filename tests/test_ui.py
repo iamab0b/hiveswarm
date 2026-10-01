@@ -77,3 +77,35 @@ def test_deferred_items_show_on_the_lead_page(stack, page):
     page.locator("[data-deferred-count] button", has_text="resolve").first.click()
     stack.wait_for(lambda: not any(i["task_id"] == tid for i in stack.get("/projects/demo/deferred")["items"]), 20, "the item to be resolved")
     assert not page.errors
+
+
+@pytest.mark.e2e
+def test_profiles_editor_and_roster_picker(stack, page):
+    def agent(name: str):
+        return next((a for a in stack.get("/agents") if a["agent_id"] == name), None)
+    page.goto(page.base + "/agents", wait_until="load")
+    section = page.locator("[data-profiles]")
+    section.wait_for(timeout=15000)
+    assert section.locator("[data-profile=claude_code]").count() == 1 and section.locator("[data-profile=codex]").count() == 1
+    section.locator("button", has_text="add profile").click()
+    draft = section.locator("[data-profile-draft]")
+    draft.locator("input").first.fill("ui_profile")
+    draft.locator("input[type=number]").fill("1")
+    draft.locator("button", has_text="add").click()
+    section.locator("[data-profile=ui_profile]").wait_for(timeout=15000)
+    stack.wait_for(lambda: (agent("ui_profile") or {}).get("alive"), 40, "the worker to register the profile from the app")
+    assert agent("ui_profile")["provider"] == "claude_code"
+    section.locator("[data-profile=ui_profile] button", has_text="remove").click()
+    stack.wait_for(lambda: agent("ui_profile") is None or not agent("ui_profile")["alive"], 40, "the profile to retire")
+
+    page.goto(page.base + "/", wait_until="load")
+    page.wait_for_timeout(500)
+    page.keyboard.press("g")
+    roster = page.locator("[data-roster]")
+    roster.wait_for(timeout=10000)
+    roster.locator("button", has_text="Codex").click()
+    stack.wait_for(lambda: stack.get("/projects/demo/settings")["agents"] == ["codex"], 10, "the roster to be saved")
+    roster.locator("button", has_text="any").click()
+    stack.wait_for(lambda: stack.get("/projects/demo/settings")["agents"] == [], 10, "the roster to be cleared")
+    page.keyboard.press("Escape")
+    assert not page.errors

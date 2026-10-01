@@ -80,7 +80,8 @@ def claude_parser(meta: dict[str, Any], cwd: str | None = None) -> Parser:
         if t == "system":
             st = ev.get("subtype")
             if st == "init":
-                return [("info", f"session started · model {ev.get('model', '?')}")]
+                effort = f" · effort {ev['effort']}" if ev.get("effort") else ""
+                return [("info", f"session started · model {ev.get('model', '?')}{effort}")]
             if st == "api_retry":
                 return [("err", f"API retry {ev.get('attempt')}/{ev.get('max_retries')}: {ev.get('error')}")]
             if st == "permission_denied":
@@ -503,6 +504,8 @@ def claude_code(task: dict[str, Any], wt: str, handoff: str, cfg: dict[str, Any]
         cmd += ["--permission-mode", cfg.get("permission_mode", "acceptEdits")]
     if cfg.get("model"):
         cmd += ["--model", cfg["model"]]
+    if cfg.get("effort"):
+        cmd += ["--effort", str(cfg["effort"])]
     meta: dict[str, Any] = {}
     res = _run(cmd, wt, env, int(cfg.get("timeout", 1800)), emit=emit, parser=claude_parser(meta, wt))
     res.update({k: v for k, v in meta.items() if v is not None})
@@ -511,7 +514,10 @@ def claude_code(task: dict[str, Any], wt: str, handoff: str, cfg: dict[str, Any]
 
 def codex(task: dict[str, Any], wt: str, handoff: str, cfg: dict[str, Any], emit: LogSink = None) -> dict[str, Any]:
     sandbox = cfg.get("sandbox", "workspace-write")
-    cmd = ["codex", "exec", "--sandbox", sandbox, _prompt(task, handoff, wt)]
+    cmd = ["codex", "exec", "--sandbox", sandbox]
+    if cfg.get("effort"):
+        cmd += ["-c", f'model_reasoning_effort="{cfg["effort"]}"']
+    cmd.append(_prompt(task, handoff, wt))
     if cfg.get("model"):
         cmd += ["--model", cfg["model"]]
     meta: dict[str, Any] = {}
@@ -581,6 +587,9 @@ CAPABILITIES: dict[str, list[str]] = {
     "cursor": [TOOLS, LOOP],
     "opencode": [TOOLS, LOOP],
 }
+
+# Adapters whose CLI takes a reasoning-effort setting; the others ignore `effort` (the worker says so once).
+EFFORT_FLAGS: dict[str, str] = {"claude_code": "--effort", "codex": "-c model_reasoning_effort="}
 
 BINARIES: dict[str, str] = {
     "claude_code": "claude",

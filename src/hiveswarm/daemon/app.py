@@ -46,6 +46,8 @@ class Register(BaseModel):
     capabilities: list[str] = []
     capacity: int = 1
     provider: str | None = None  # the adapter behind this agent; lanes of one provider share its usage limit
+    model: str | None = None
+    effort: str | None = None
 
 
 class CapacityIn(BaseModel):
@@ -271,12 +273,12 @@ def agents() -> list[dict[str, Any]]:
     busy = db.busy_counts()
     return [{**dict(a), "capabilities": json.loads(a["capabilities"]), "alive": (now - a["last_seen"]) < 120,
              "busy": busy.get(a["agent_id"], 0)}
-            for a in db.agents_all()]
+            for a in db.agents_all() if not (a["last_seen"] == 0 and (a["capacity"] or 0) == 0)]  # retired on purpose
 
 
 @app.post("/register", dependencies=[Depends(_auth)])
 def register(r: Register) -> dict[str, Any]:
-    row = db.agent_register(r.agent_id, r.host, r.capabilities, r.capacity, r.provider)
+    row = db.agent_register(r.agent_id, r.host, r.capabilities, r.capacity, r.provider, r.model, r.effort)
     return {"ok": True, "desired_capacity": row["desired_capacity"] if row else None}
 
 
@@ -405,6 +407,48 @@ def projects() -> dict[str, Any]:
         p["ruleset"] = rulesets.label(rs["name"], rs["intensity"])
         p["deferred_open"] = counts.get(name, 0)
     return out
+
+
+class ProjectSettings(BaseModel):
+    agents: list[str] | None = None          # the roster: only these agents get the project's work; [] or null clears it
+    ruleset: str | None = None               # "craft" | "off"
+    ruleset_intensity: str | None = None     # "standard" | "strict"
+
+
+@app.get("/projects/{name}/settings", dependencies=[Depends(_auth)])
+def project_settings_get(name: str) -> dict[str, Any]:
+    cfg = load_current()
+    if name not in (cfg.raw.get("projects") or {}):
+        raise HTTPException(status_code=404, detail="no such project")
+    p = cfg.project(name)
+    rs = rulesets.resolve(cfg, name)
+    return {"name": name, "agents": list(p.get("agents") or []), "ruleset": rs["name"], "ruleset_intensity": rs["intensity"],
+            "ruleset_set": "ruleset" in p or "ruleset_intensity" in p}
+
+
+@app.post("/projects/{name}/settings", dependencies=[Depends(_auth)])
+def project_settings_set(name: str, body: ProjectSettings) -> dict[str, Any]:
+    """Edit a project's section in config.toml: its roster (which agents may take its work) and its ruleset."""
+    from .. import tomledit
+    from ..config import config_path
+    cfg = load_current()
+    if name not in (cfg.raw.get("projects") or {}):
+        raise HTTPException(status_code=404, detail="no such project")
+    updates: dict[str, Any] = {}
+    if body.agents is not None:
+        updates["agents"] = [a for a in body.agents if a] or None
+    if body.ruleset is not None:
+        if body.ruleset not in ("craft", "off"):
+            raise HTTPException(status_code=400, detail="ruleset must be craft or off")
+        updates["ruleset"] = body.ruleset
+    if body.ruleset_intensity is not None:
+        if body.ruleset_intensity not in ("standard", "strict"):
+            raise HTTPException(status_code=400, detail="ruleset_intensity must be standard or strict")
+        updates["ruleset_intensity"] = body.ruleset_intensity
+    if updates:
+        tomledit.update_section(config_path(), f"projects.{name}", updates)
+        load.cache_clear()
+    return project_settings_get(name)
 
 
 @app.get("/projects/{name}/ruleset", dependencies=[Depends(_auth)])

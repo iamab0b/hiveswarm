@@ -145,8 +145,45 @@ export interface Agent {
   capacity: number;
   desired_capacity?: number | null;
   provider?: string | null;
+  model?: string | null;
+  effort?: string | null;
   alive: boolean;
   busy: number;
+}
+
+export interface Profile {
+  name: string;
+  adapter: string;
+  model: string | null;
+  effort: string | null;
+  concurrency: number;
+  enabled: boolean;
+  installed: boolean;
+  binary: string;
+}
+
+export interface AdapterInfo {
+  name: string;
+  installed: boolean;
+  efforts: string[];
+  effort_supported: boolean;
+}
+
+export interface ProfilesInfo {
+  ok: boolean;
+  reason?: string;
+  path?: string;
+  host?: string;
+  profiles: Profile[];
+  adapters: AdapterInfo[];
+}
+
+export interface ProjectSettings {
+  name: string;
+  agents: string[];
+  ruleset: string;
+  ruleset_intensity: string;
+  ruleset_set: boolean;
 }
 
 export interface InboxItem {

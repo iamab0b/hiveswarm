@@ -91,6 +91,7 @@ The token is not in the file: set `HIVESWARM_TOKEN` (in `~/.hiveswarm/env`). Wit
 | `posture` | `decide.posture` | |
 | `acceptance_templates` | `[]` | suggestions shown in the New goal dialog |
 | `ruleset`, `ruleset_intensity` | from `[rulesets]` | `"craft"` or `"off"`; `"standard"` or `"strict"` (see [craft.md](craft.md)) |
+| `agents` | `[]` | the roster: only these agent ids (or adapters) take this project's work; the New goal dialog edits it ([profiles.md](profiles.md)) |
 
 ### `[rulesets]`
 
@@ -123,7 +124,7 @@ Optional hub-local lanes for a machine that runs a model itself. `prime_agent` d
 
 ### `[agents.<name>]`
 
-The table name is the agent id shown everywhere; `adapter` picks the implementation (defaults to the name).
+The table name is the agent id shown everywhere; `adapter` picks the implementation (defaults to the name). Several tables may share one adapter: each is a **profile** with its own model, effort and lanes (`[agents.opus_max]` with `adapter = "claude_code"`, `model = "opus"`, `effort = "max"`). The worker re-reads this file when it changes and starts, stops or re-labels lanes to match, so profiles can be added, changed and removed while it runs; the Agents page edits them. See [profiles.md](profiles.md).
 
 | key | default | applies to | |
 |---|---|---|---|
@@ -132,7 +133,8 @@ The table name is the agent id shown everywhere; `adapter` picks the implementat
 | `binary` | adapter's default | all | executable to look for on PATH |
 | `concurrency` | `1` | all | parallel lanes for this agent at start; the Agents page and `hm agents --set` change the live count (see below) |
 | `timeout` | `1800` | all | seconds per headless attempt |
-| `model` | agent's default | all | passed through to the CLI |
+| `model` | agent's default | all | passed through to the CLI (`--model`) |
+| `effort` | agent's default | claude_code, codex | reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` for Claude Code (`--effort`), `minimal`…`xhigh` for Codex (`model_reasoning_effort`); other CLIs have no such setting and the worker says so once |
 | `config_dir` | `~/.claude-worker` | claude_code | a separate Claude config so swarm sessions never touch your own |
 | `oauth_token_file` | `~/.hiveswarm/claude-token` | claude_code | written by `hm login claude` |
 | `dangerously_skip_permissions` | `false` | claude_code, antigravity | headless runs skip permission prompts |

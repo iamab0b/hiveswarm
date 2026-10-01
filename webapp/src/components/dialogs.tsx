@@ -5,7 +5,7 @@ import { Loader2, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import type { Task } from "@/lib/types";
-import { agentLabel, sessionOf } from "@/lib/utils";
+import { agentLabel, cn, sessionOf } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "./ui/dialog";
 import { Input, Label, Segmented, Select, Switch, Textarea } from "./ui/fields";
@@ -19,6 +19,46 @@ const PERMS = [
   { value: "acceptEdits", label: "acceptEdits", hint: "edits allowed, commands ask" },
   { value: "bypass", label: "bypass", hint: "never asks (sandbox only)" },
 ];
+
+/** Which agents may take a project's work: toggle chips over the live agents, saved to projects.<name>.agents. */
+export function RosterPicker({ project }: { project: string }) {
+  const agents = useStore((s) => s.agents);
+  const [roster, setRoster] = useState<string[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setRoster(null);
+    api.projectSettings(project).then((r) => alive && setRoster(r.agents)).catch(() => alive && setRoster([]));
+    return () => { alive = false; };
+  }, [project]);
+  if (roster === null) return null;
+  const names = Array.from(new Set([...agents.map((a) => a.agent_id), ...roster]));
+  const save = async (next: string[]) => {
+    setRoster(next);
+    try {
+      await api.setProjectSettings(project, { agents: next });
+    } catch (e) {
+      toast.error(String((e as Error).message));
+    }
+  };
+  const toggle = (name: string) => save(roster.includes(name) ? roster.filter((n) => n !== name) : [...roster, name]);
+  return (
+    <div data-roster>
+      <Label hint={roster.length ? "only these take this project's work" : "any agent"}>Agents for {project}</Label>
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" onClick={() => save([])} className={cn("h-7 rounded-md border px-2.5 text-[12px] transition-colors duration-150", !roster.length ? "border-fg bg-fg text-bg" : "border-border text-muted hover:text-fg")}>any</button>
+        {names.map((n) => {
+          const a = agents.find((x) => x.agent_id === n);
+          const on = roster.includes(n);
+          return (
+            <button key={n} type="button" onClick={() => toggle(n)} className={cn("h-7 rounded-md border px-2.5 text-[12px] transition-colors duration-150", on ? "border-fg bg-fg text-bg" : "border-border text-muted hover:text-fg", a && !a.alive && "line-through")}>
+              {agentLabel(n)}{a?.model ? <span className={cn("ml-1", on ? "opacity-70" : "text-dim")}>{a.model}{a.effort ? ` ${a.effort}` : ""}</span> : null}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boolean; onOpenChange: (o: boolean) => void; defaultProject?: string | null }) {
   const projects = useStore((s) => s.projects);
@@ -214,6 +254,7 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
                 ) : <div />}
               </div>
             ) : null}
+            {!isNew && project ? <RosterPicker project={project} /> : null}
             {mode === "tasks" || mode === "swarm" ? (
               <Switch checked={review} onChange={(v) => { setReview(v); if (!v) setPlan(null); }} label="Let me review the plan before anything starts" />
             ) : null}

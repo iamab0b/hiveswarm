@@ -1,4 +1,4 @@
-import type { Agent, AgentTable, DeferredItem, Directive, FeedEntry, LiveStep, InboxItem, LocalInfo, LogEntry, Project, RulesetRow, SessionInfo, StatRow, Summary, Task, TaskDetail } from "./types";
+import type { Agent, AgentTable, DeferredItem, Directive, FeedEntry, LiveStep, InboxItem, LocalInfo, LogEntry, ProfilesInfo, Project, ProjectSettings, RulesetRow, SessionInfo, StatRow, Summary, Task, TaskDetail } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -67,6 +67,13 @@ export const api = {
     req<{ project: string; open: number; items: DeferredItem[] }>("GET", `/projects/${project}/deferred`, undefined, includeResolved ? { include_resolved: "true" } : undefined),
   resolveDeferred: (id: string, note?: string) => req<{ ok: boolean; item: DeferredItem }>("POST", `/deferred/${id}/resolve`, { by: "you", note: note || null }),
   rulesetStats: () => req<{ rows: RulesetRow[] }>("GET", "/stats/rulesets"),
+  profiles: () => req<ProfilesInfo>("GET", "/local/profiles"),
+  setProfile: (p: { name: string; adapter?: string; model?: string | null; effort?: string | null; concurrency?: number; enabled?: boolean }) =>
+    req<{ ok: boolean; reason?: string; note?: string }>("POST", "/local/profiles", p),
+  deleteProfile: (name: string) => req<{ ok: boolean; reason?: string }>("DELETE", `/local/profiles/${name}`),
+  projectSettings: (name: string) => req<ProjectSettings>("GET", `/projects/${name}/settings`),
+  setProjectSettings: (name: string, body: { agents?: string[]; ruleset?: string; ruleset_intensity?: string }) =>
+    req<ProjectSettings>("POST", `/projects/${name}/settings`, body),
   remove: (id: string) => req<{ ok: boolean }>("DELETE", `/tasks/${id}`),
   plan: (p: { goal: string; project: string; new_repo: boolean }) =>
     req<{ tasks: { spec: string; acceptance: string | null }[]; error?: string | null }>("POST", "/plan", p),

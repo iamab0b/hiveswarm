@@ -11,7 +11,7 @@ import httpx
 
 from . import db, perf
 from .classify import QUESTIONS, TASK_TYPES, _repo_summary, diff_band
-from .config import load
+from .config import load, load_current
 from .workers import prime_agent
 
 log = logging.getLogger("hiveswarm.advise")
@@ -40,8 +40,10 @@ PRIOR: dict[str, dict[str, float]] = {
 }
 
 
-def _prior(agent: str, task_type: str, band: int) -> float:
-    p = PRIOR.get(agent, {"default": 0.5})
+def _prior(agent: str, task_type: str, band: int, provider: str | None = None) -> float:
+    """The default pass estimate for an agent: its own table, else its provider's (a `[agents.opus_max]` profile
+    behind the claude_code adapter starts from claude_code's prior), else 0.5."""
+    p = PRIOR.get(agent) or PRIOR.get(provider or "") or {"default": 0.5}
     val = p.get("default", 0.5)
     if task_type in p:
         val = max(val, p[task_type])
@@ -99,7 +101,8 @@ def _lanes() -> dict[str, dict[str, Any]]:
         cap = int(caps.get(aid, 1))
         b = int(busy.get(aid, 0))
         out[aid] = {"capacity": cap, "busy": b, "free": max(0, cap - b), "sessions": "sessions" in capabilities,
-                    "host": a["host"], "capabilities": capabilities}
+                    "host": a["host"], "capabilities": capabilities, "provider": a["provider"] or aid,
+                    "model": a["model"], "effort": a["effort"]}
     if prime_agent.available():
         b = int(busy.get(prime_agent.AGENT, 0))
         out[prime_agent.AGENT] = {"capacity": 1, "busy": b, "free": max(0, 1 - b), "sessions": False, "host": "hub",
@@ -114,7 +117,10 @@ def _stats() -> dict[tuple[str, str, int], dict[str, Any]]:
     return out
 
 
-def _score(agent: str, task_type: str, band: int, stats: dict[tuple[str, str, int], dict[str, Any]]) -> tuple[float, str]:
+def _score(agent: str, task_type: str, band: int, stats: dict[tuple[str, str, int], dict[str, Any]],
+           provider: str | None = None, siblings: list[str] | None = None) -> tuple[float, str]:
+    """Pass estimate for an agent on a kind of work: its own cell, else its own history on that type, else the
+    history of its provider's other profiles (`siblings`), else the prior."""
     row = stats.get((agent, task_type, band))
     if row is None:
         near = [v for (a, t, b), v in stats.items() if a == agent and t == task_type]
@@ -124,11 +130,18 @@ def _score(agent: str, task_type: str, band: int, stats: dict[tuple[str, str, in
             n = sum(v["n"] for v in near)
             if n >= 2:
                 return alpha / (alpha + beta), f"{int(n)} past {task_type} attempts"
-        return _prior(agent, task_type, band), "no history yet, default"
+        kin = [v for (a, t, b), v in stats.items() if siblings and a in siblings and a != agent and t == task_type]
+        if kin:
+            alpha = sum(v["alpha"] for v in kin)
+            beta = sum(v["beta"] for v in kin)
+            n = sum(v["n"] for v in kin)
+            if n >= 2:
+                return alpha / (alpha + beta), f"no history of its own; {int(n)} past {task_type} attempts by other {provider} profiles"
+        return _prior(agent, task_type, band, provider), "no history yet, default"
     n = int(row["n"])
     p = row["alpha"] / (row["alpha"] + row["beta"])
     if n < 3:
-        p = 0.5 * p + 0.5 * _prior(agent, task_type, band)
+        p = 0.5 * p + 0.5 * _prior(agent, task_type, band, provider)
     return p, f"{n} past {task_type} attempts at this difficulty"
 
 
@@ -143,6 +156,15 @@ def advise(project: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
         speed = perf.statuses()
     except Exception:
         speed = {}
+    names = [str(a) for a in (load_current().project(project).get("agents") or [])]
+    on_roster = {a for a, l in lanes.items() if a in names or l.get("provider") in names} if names else set(lanes)
+    roster_note = None
+    if names and not on_roster:
+        roster_note = "roster " + ", ".join(names) + " has no live agent; advising from every agent"
+        on_roster = set(lanes)
+    by_provider: dict[str, list[str]] = {}
+    for a, l in lanes.items():
+        by_provider.setdefault(l.get("provider") or a, []).append(a)
     results: list[dict[str, Any]] = []
     sources: set[str] = set()
     demand: dict[str, int] = {}
@@ -153,14 +175,15 @@ def advise(project: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
         sources.add(c["source"])
         band = diff_band(c["difficulty"])
         interactive = c["needs_human"] >= 0.6 or (c["difficulty"] >= 3.5 and c["reasoning"] >= 0.75)
-        pool = [a for a, l in lanes.items() if (l["sessions"] if interactive else True)]
+        pool = [a for a, l in lanes.items() if a in on_roster and (l["sessions"] if interactive else True)]
         if c["is_multistep"] > 0.7:
             pool = [a for a in pool if "agent_loop" in lanes[a]["capabilities"]]
         if c["needs_tools"] > 0.7:
             pool = [a for a in pool if "tools" in lanes[a]["capabilities"]]
         scored = []
         for a in pool:
-            p, why = _score(a, c["task_type"], band, stats)
+            prov = lanes[a].get("provider") or a
+            p, why = _score(a, c["task_type"], band, stats, prov, by_provider.get(prov))
             cell = speed.get((a, c["task_type"]))
             status = cell["status"] if cell else "unknown"
             if cell and cell["probation"]:
@@ -194,16 +217,32 @@ def advise(project: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
             "reason": why,
             "classification_source": c["source"],
         })
-    total_free = sum(l["free"] for l in lanes.values())
+    total_free = sum(l["free"] for a, l in lanes.items() if a in on_roster)
     n = len(tasks)
     waves = math.ceil(n / total_free) if total_free else None
     over = {a: d - lanes[a]["free"] for a, d in demand.items() if a in lanes and d > lanes[a]["free"]}
+    providers = {}
+    for prov, ids in by_provider.items():
+        ids = [a for a in ids if a in on_roster]
+        if ids:
+            providers[prov] = {"free": sum(lanes[a]["free"] for a in ids), "capacity": sum(lanes[a]["capacity"] for a in ids), "agents": ids}
     parts = []
     if not lanes:
         parts.append("no agents are alive right now; nothing can start until a worker registers")
     else:
+        def lane_label(a: str) -> str:
+            l = lanes[a]
+            extra = " ".join(x for x in (l.get("model"), f"effort={l['effort']}" if l.get("effort") else None) if x)
+            return f"{a} {l['free']}/{l['capacity']}" + (f" ({extra})" if extra else "")
         parts.append(f"{total_free} free lane{'s' if total_free != 1 else ''} across " + ", ".join(
-            f"{a} {l['free']}/{l['capacity']}" for a, l in lanes.items()))
+            lane_label(a) for a in lanes if a in on_roster))
+        shared = [f"{prov} {v['free']}/{v['capacity']} across {', '.join(v['agents'])}" for prov, v in providers.items() if len(v["agents"]) > 1]
+        if shared:
+            parts.append("lanes sharing one sign-in: " + "; ".join(shared))
+        if names:
+            parts.append("roster: " + ", ".join(names))
+        if roster_note:
+            parts.append(roster_note)
         if n:
             parts.append(f"{n} task{'s' if n != 1 else ''} → about {waves} wave{'s' if (waves or 0) != 1 else ''} at current capacity" if waves else "")
         if over:
@@ -213,6 +252,8 @@ def advise(project: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
         "project": project,
         "tasks": results,
         "lanes": lanes,
+        "providers": providers,
+        "roster": names,
         "free_lanes": total_free,
         "waves": waves,
         "probation": sorted(probation_notes),

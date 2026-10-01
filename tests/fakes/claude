@@ -9,7 +9,7 @@ import json, os, sys, time, uuid, subprocess, re, select
 
 args = sys.argv[1:]
 opts = {"name": None, "permission-mode": "default", "settings": "{}", "model": None, "resume": None, "mcp-config": None,
-        "output-format": None}
+        "output-format": None, "effort": None}
 prompt = ""
 headless = False
 i = 0
@@ -169,7 +169,7 @@ if headless:
         doc = 'def add(a, b):\n    """Return the sum of a and b."""\n'
         new = src.replace("def add(a, b):\n", doc, 1) if '"""' not in src else src + "\n# headless pass\n"
         open("add.py", "w").write(new)
-    jout({"type": "system", "subtype": "init", "model": "claude-sonnet-5"})
+    jout({"type": "system", "subtype": "init", "model": opts["model"] or "claude-sonnet-5", "effort": opts["effort"]})
     jhook_ctx(hook("UserPromptSubmit", {"prompt": prompt}))
     if not os.path.exists("add.py"):
         jout({"type": "assistant", "message": {"content": [{"type": "text", "text": "OK"}]}})
@@ -200,7 +200,8 @@ if headless:
                       "usage": {"input_tokens": 900, "output_tokens": 220}, "result": "Done."}), flush=True)
     sys.exit(0)
 
-say(f"╭─ Claude Code (fake) · {opts['name'] or ('resumed ' + session_id[:8])} · mode={opts['permission-mode']} ─╮")
+say(f"╭─ Claude Code (fake) · {opts['name'] or ('resumed ' + session_id[:8])} · mode={opts['permission-mode']}"
+    + (f" · model={opts['model']}" if opts['model'] else "") + (f" · effort={opts['effort']}" if opts['effort'] else "") + " ─╮")
 hook("SessionStart", {"source": "startup"})
 say(f"> {prompt.strip().splitlines()[0][:100]}")
 user(prompt)

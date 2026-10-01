@@ -45,7 +45,8 @@ def conn() -> sqlite3.Connection:
 
 
 _COLUMNS = {
-    "agents": [("capacity", "INTEGER NOT NULL DEFAULT 1"), ("desired_capacity", "INTEGER"), ("provider", "TEXT")],
+    "agents": [("capacity", "INTEGER NOT NULL DEFAULT 1"), ("desired_capacity", "INTEGER"), ("provider", "TEXT"),
+               ("model", "TEXT"), ("effort", "TEXT")],
     "tasks": [("kind", "TEXT NOT NULL DEFAULT 'task'"), ("session", "TEXT"), ("preferred_agent", "TEXT"), ("flags", "TEXT")],
     "attempts": [("steps", "INTEGER"), ("step_avg_s", "REAL"), ("step_p90_s", "REAL"), ("step_max_s", "REAL"),
                  ("slow_steps", "INTEGER"), ("silence_max_s", "REAL"), ("first_action_s", "REAL"), ("think_avg_s", "REAL"),
@@ -201,26 +202,33 @@ def task_expire_unclaimed(claim_seconds: int) -> list[str]:
 
 
 def agent_retire(agent_id: str) -> None:
-    """A worker going away on purpose: the agent stops counting as alive at once instead of after the heartbeat window."""
-    run("UPDATE agents SET last_seen = 0 WHERE agent_id = ?", agent_id)
+    """A worker going away on purpose: the agent stops counting as alive at once instead of after the heartbeat
+    window, and keeps no lanes, so a claim still in flight from a retiring lane cannot make it a routing candidate
+    again. The next registration restores its capacity."""
+    run("UPDATE agents SET last_seen = 0, capacity = 0 WHERE agent_id = ?", agent_id)
 
 
 def agent_register(agent_id: str, host: str | None, capabilities: list[str], capacity: int = 1,
-                   provider: str | None = None) -> sqlite3.Row | None:
+                   provider: str | None = None, model: str | None = None, effort: str | None = None) -> sqlite3.Row | None:
     """Record a worker's agent with the lanes it actually runs. `desired_capacity` (set from the app) is kept across
     registrations; the worker reads it from the returned row and sizes its lanes to match."""
     t = now()
     import json as _json
     with tx() as c:
         c.execute(
-            """INSERT INTO agents (agent_id, host, capabilities, last_seen, registered_at, capacity, provider)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+            """INSERT INTO agents (agent_id, host, capabilities, last_seen, registered_at, capacity, provider, model, effort)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(agent_id) DO UPDATE SET host=excluded.host, capabilities=excluded.capabilities,
                  last_seen=excluded.last_seen, capacity=excluded.capacity,
-                 provider=COALESCE(excluded.provider, agents.provider)""",
-            (agent_id, host, _json.dumps(capabilities), t, t, max(0, int(capacity)), provider),
+                 provider=COALESCE(excluded.provider, agents.provider), model=excluded.model, effort=excluded.effort""",
+            (agent_id, host, _json.dumps(capabilities), t, t, max(0, int(capacity)), provider, model, effort),
         )
     return one("SELECT * FROM agents WHERE agent_id = ?", agent_id)
+
+
+def agent_providers() -> dict[str, str]:
+    """agent_id -> provider (the adapter behind it) for every registered agent."""
+    return {r["agent_id"]: (r["provider"] or r["agent_id"]) for r in all_("SELECT agent_id, provider FROM agents")}
 
 
 def agent_set_desired_capacity(agent_id: str, capacity: int | None) -> sqlite3.Row | None:
@@ -232,7 +240,9 @@ def agent_set_desired_capacity(agent_id: str, capacity: int | None) -> sqlite3.R
 
 
 def agent_touch(agent_id: str) -> None:
-    run("UPDATE agents SET last_seen = ? WHERE agent_id = ?", now(), agent_id)
+    """A heartbeat or claim: refreshes last_seen for a registered agent; a retired one (capacity 0, last_seen 0)
+    stays retired until it registers again."""
+    run("UPDATE agents SET last_seen = ? WHERE agent_id = ? AND NOT (last_seen = 0 AND capacity = 0)", now(), agent_id)
 
 
 def agents_alive(within_seconds: int = 120) -> list[sqlite3.Row]:

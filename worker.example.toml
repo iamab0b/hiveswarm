@@ -19,6 +19,18 @@ dangerously_skip_permissions = true # headless tasks; interactive sessions use t
 concurrency = 2
 timeout = 1800
 
+# A profile: the same CLI with its own model, effort and lanes. Any number of tables may share an adapter;
+# the table name is the agent id the router and the app use. Edit these while the worker runs; it applies
+# the change within about ten seconds (the Agents page edits them too).
+# [agents.opus_max]
+# adapter = "claude_code"
+# model = "opus"                    # a Claude Code alias or full model name
+# effort = "max"                    # low | medium | high | xhigh | max (Claude Code); minimal…xhigh for Codex
+# concurrency = 1
+# config_dir = "~/.claude-worker"
+# oauth_token_file = "~/.hiveswarm/claude-token"
+# dangerously_skip_permissions = true
+
 [agents.codex]
 adapter = "codex"
 sandbox = "workspace-write"         # or "danger-full-access"

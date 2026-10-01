@@ -285,6 +285,8 @@ class SessionHost:
                 argv += ["--name", live.name]
             if acfg.get("model"):
                 argv += ["--model", acfg["model"]]
+            if acfg.get("effort"):
+                argv += ["--effort", str(acfg["effort"])]
             argv.append(prompt)
         elif adapter == "codex":
             if mode == "bypass":
@@ -293,6 +295,8 @@ class SessionHost:
                 argv = ["codex", "--sandbox", "workspace-write", "-a", "on-request"]
             if acfg.get("model"):
                 argv += ["--model", acfg["model"]]
+            if acfg.get("effort"):
+                argv += ["-c", f'model_reasoning_effort="{acfg["effort"]}"']
             argv.append(prompt)
         elif adapter == "cursor":
             binary = acfg.get("binary") or "cursor-agent"

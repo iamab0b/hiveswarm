@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/fields";
 import { EventStream } from "@/components/EventStream";
+import { Profiles } from "@/components/Profiles";
 
 const StatsCharts = lazy(() => import("./StatsCharts"));
 
@@ -337,6 +338,7 @@ export function AgentsPage() {
                 </div>
                 <div className="mt-3 grid grid-cols-[80px_1fr] gap-x-2 gap-y-1 text-[12px] text-muted">
                   <span>host</span><span className="mono text-fg">{a.host || "—"}</span>
+                  {a.provider && (a.provider !== a.agent_id || a.model || a.effort) ? <><span>runs as</span><span className="text-fg">{agentLabel(a.provider)}{a.model ? <> · <span className="mono">{a.model}</span></> : null}{a.effort ? <> · effort {a.effort}</> : null}</span></> : null}
                   <span>last seen</span><span className="text-fg">{age(a.last_seen, now)} ago</span>
                   <span>can do</span><span className="text-fg">{(a.capabilities || []).join(", ")}</span>
                 </div>
@@ -356,6 +358,7 @@ export function AgentsPage() {
           })}
           {!agents.length ? <Card className="col-span-full"><EmptyState title="No agents registered" hint="Start hiveswarm-worker (hm up does it for you); hub-local lanes (a local model on the hub) are checked directly." /></Card> : null}
         </div>
+        <Profiles />
       </div>
     </div>
   );
