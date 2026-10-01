@@ -78,8 +78,14 @@ export function flagAttention(t: Task | null | undefined): Attention | null {
   const flags = taskFlags(t);
   if (!flags.length) return null;
   const f = flags[flags.length - 1];
-  const kind = (f.kind === "directive" || f.kind === "stalled" ? f.kind : "failed") as Attention["kind"];
+  const kind = (f.kind === "directive" || f.kind === "stalled" || f.kind === "untested" ? f.kind : "failed") as Attention["kind"];
   return { kind, summary: f.summary, detail: f.detail, since: f.since, ref: f.ref };
+}
+
+/** The untested flag outlives the task: a done task keeps it until someone reviews and merges or clears it. */
+export function untestedFlag(t: Task | null | undefined): Attention | null {
+  const f = taskFlags(t).find((x) => x.kind === "untested");
+  return f ? { kind: "untested", summary: f.summary, detail: f.detail, since: f.since, ref: f.ref } : null;
 }
 
 export interface OpenStep { tool: string; since: number; }
@@ -215,6 +221,7 @@ export function attentionLabel(a: Attention): string {
     case "failed": return "Failed";
     case "directive": return "Standing order";
     case "stalled": return "Stalled";
+    case "untested": return "Untested";
     default: return a.kind;
   }
 }
@@ -228,6 +235,7 @@ export function attentionTone(kind: string): "warn" | "danger" | "success" | "in
     case "failed": return "danger";
     case "directive": return "warn";
     case "stalled": return "warn";
+    case "untested": return "warn";
     default: return "dim";
   }
 }

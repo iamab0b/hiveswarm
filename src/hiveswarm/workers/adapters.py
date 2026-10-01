@@ -440,6 +440,14 @@ WIKI_NOTE = ("This repo keeps a team wiki in .wiki/ — read .wiki/README.md and
              "as a few lines under a dated heading in .wiki/learnings.md.")
 
 
+def ruleset_text(task: dict[str, Any]) -> str:
+    """The ruleset block the daemon attached to this task's claim (see rulesets.py), or ""."""
+    rs = task.get("ruleset")
+    if isinstance(rs, dict):
+        return str(rs.get("text") or "")
+    return ""
+
+
 def _prompt(task: dict[str, Any], handoff: str, wt: str | None = None) -> str:
     parts = [handoff, "## Task", task["spec"]]
     if task.get("acceptance"):
@@ -449,9 +457,28 @@ def _prompt(task: dict[str, Any], handoff: str, wt: str | None = None) -> str:
                  "You have internet access: if a tool, library, or test runner is missing, install it "
                  "(pip install --user, npm install, cargo add, and so on). "
                  "Never replace the real test runner with a stub, mock, or wrapper script.")
+    rules = ruleset_text(task)
+    if rules:
+        parts.append("\n" + rules)
     if wt and os.path.isdir(os.path.join(wt, ".wiki")):
         parts.append(WIKI_NOTE)
     return "\n".join(p for p in parts if p)
+
+
+def install_skills(config_dir: str, skills: dict[str, str]) -> None:
+    """Write Claude Code skills (name -> SKILL.md) into a config dir; rewrites only when the text changed."""
+    import logging
+    for name, text in skills.items():
+        try:
+            d = os.path.join(config_dir, "skills", name)
+            os.makedirs(d, exist_ok=True)
+            f = os.path.join(d, "SKILL.md")
+            cur = open(f).read() if os.path.exists(f) else None
+            if cur != text:
+                with open(f, "w") as fh:
+                    fh.write(text)
+        except Exception as e:
+            logging.getLogger("hiveswarm.adapters").warning("could not install the %s skill: %s", name, e)
 
 
 def claude_code(task: dict[str, Any], wt: str, handoff: str, cfg: dict[str, Any], emit: LogSink = None) -> dict[str, Any]:
@@ -461,6 +488,9 @@ def claude_code(task: dict[str, Any], wt: str, handoff: str, cfg: dict[str, Any]
         claude_auth.seed_config(env["CLAUDE_CONFIG_DIR"], [wt])
     except Exception:
         pass
+    if ruleset_text(task):
+        from .. import rulesets
+        install_skills(env["CLAUDE_CONFIG_DIR"], {"hiveswarm-craft": rulesets.CRAFT_SKILL_MD})
     cmd = ["claude", "-p", _prompt(task, handoff, wt), "--output-format", "stream-json", "--verbose"]
     if HOOK_SETTINGS is not None:
         try:

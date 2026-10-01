@@ -60,9 +60,13 @@ Four companion skills go deeper; read the one that matches the step you are on:
    stall counts against the first one). Leave anything you are unsure about for the human — say so in your reply
    and keep waiting.
 7. **Review**: for every done task, `hm_diff` and read it critically against the spec — and against any standing
-   order that applied to it. `hm_tail` shows what the agent did and what the verifier said. Merge good work with
-   `hm_merge`. For weak work, `hm_retry` with a sharper spec (say what was wrong). Cancel runaway agents with
-   `hm_cancel`.
+   order that applied to it. `hm_tail` shows what the agent did and what the verifier said, ending with its
+   Changed / Tested / Deferred handoff (every agent works under the Hiveswarm Craft ruleset; see the
+   `hiveswarm-craft` skill). Merge good work with `hm_merge`. A task flagged `untested` (code changed, no test
+   touched, no test run) is refused by `hm_merge` until you either `hm_retry` it asking for the test, or, having
+   read the diff and judged the risk, merge with `acknowledge_untested=true` and tell the human why. Deferred
+   items land in `hm_deferred`; fold the ones that matter into the next wave. For weak work, `hm_retry` with a
+   sharper spec (say what was wrong). Cancel runaway agents with `hm_cancel`.
 8. **Report**: when the goal is met (or blocked), summarise what was merged, what failed and why, and what is
    left, in a few lines. Then stop and wait for the human's next message.
 
@@ -128,9 +132,14 @@ def lead_prompt(goal: str, project: str, acceptance: str | None = None, persiste
         "then correct the agent with hm_send, or hm_cancel and hm_retry with the rule in the spec, or hm_clear_flag "
         "for a false alarm. Only some tasks need one; a rule the human states in their request always does.",
         "",
+        "Craft: every agent works under the Hiveswarm Craft ruleset (minimal code, real tests, a Changed / Tested / "
+        "Deferred handoff). hm_merge refuses a task flagged `untested` until you retry it asking for the test or, after "
+        "reading the diff, pass acknowledge_untested=true and tell the human. hm_deferred lists what agents left "
+        "undone; bring the ones that matter into the next wave.",
+        "",
         "Skills: `hiveswarm-plan` (specs and acceptance commands), `hiveswarm-route` (choosing agents, probation, stalled "
-        "lanes), `hiveswarm-review` (reading a diff before merging), `hiveswarm-triage` (the inbox) — read the one that "
-        "matches the step you are on.",
+        "lanes), `hiveswarm-review` (reading a diff before merging), `hiveswarm-triage` (the inbox), `hiveswarm-craft` "
+        "(the ruleset agents work under) — read the one that matches the step you are on.",
     ]
     if acceptance:
         parts.append(f"\nThe whole goal counts as done when this exits 0 on the merged result: `{acceptance}`.")

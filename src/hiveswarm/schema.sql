@@ -163,3 +163,18 @@ CREATE TABLE IF NOT EXISTS project_tombstones (
   repo_path   TEXT,
   at          INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS deferred (
+  id          TEXT PRIMARY KEY,
+  project     TEXT NOT NULL,
+  task_id     TEXT,
+  attempt_id  TEXT,
+  agent       TEXT,
+  text        TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  resolved_at INTEGER,
+  resolved_by TEXT,
+  note        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_deferred_project ON deferred(project, resolved_at);

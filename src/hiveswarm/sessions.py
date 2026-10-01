@@ -190,18 +190,20 @@ def _fail_reason(tid: str, default: str) -> str:
 
 def inbox(limit: int = 100) -> list[dict[str, Any]]:
     rows = db.all_("""SELECT * FROM tasks WHERE (kind = 'session' AND session IS NOT NULL AND state NOT IN ('done','abandoned'))
-                      OR state = 'failed' OR (flags IS NOT NULL AND state NOT IN ('done','failed','abandoned'))
+                      OR state = 'failed' OR (flags IS NOT NULL AND state NOT IN ('failed','abandoned'))
                       ORDER BY updated_at DESC LIMIT 500""")
     out = []
     for r in rows:
         item = {"id": r["id"], "kind": r["kind"], "project": r["project"], "state": r["state"],
                 "agent": r["claimed_by"], "spec": r["spec"], "updated_at": r["updated_at"]}
         flags = []
-        if r["flags"] and r["state"] not in ("done", "failed", "abandoned"):
+        if r["flags"] and r["state"] not in ("failed", "abandoned"):
             try:
                 flags = list(json.loads(r["flags"]))
             except Exception:
                 flags = []
+            if r["state"] == "done":  # a finished task stays in the inbox only while its untested flag is unresolved
+                flags = [f for f in flags if f.get("kind") == "untested"]
         if flags:
             f = flags[-1]
             fitem = dict(item)
@@ -236,7 +238,7 @@ def inbox(limit: int = 100) -> list[dict[str, Any]]:
             item["attention"] = {"kind": "failed", "summary": _fail_reason(r["id"], "task failed after all attempts"),
                                  "since": r["updated_at"]}
             out.append(item)
-    order = {"question": 0, "permission": 1, "directive": 2, "stalled": 3, "input": 4, "usage_limit": 5, "handoff": 6, "failed": 7}
+    order = {"question": 0, "permission": 1, "directive": 2, "stalled": 3, "input": 4, "usage_limit": 5, "untested": 6, "handoff": 7, "failed": 8}
     out.sort(key=lambda x: (order.get(x["attention"]["kind"], 9), x["attention"].get("since") or 0))
     return out[:limit]
 

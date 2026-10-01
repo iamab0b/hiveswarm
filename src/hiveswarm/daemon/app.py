@@ -7,9 +7,9 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import db, directives, overlaps, perf, sessions, worktree
+from .. import db, directives, overlaps, perf, rulesets, sessions, worktree
 from .. import projects as projects_mod
-from ..config import env_secret, load
+from ..config import env_secret, load, load_current
 from . import dispatcher
 
 app = FastAPI(title="hiveswarm")
@@ -330,8 +330,10 @@ def _claimed(agent_id: str, t: Any, cfg: Any) -> dict[str, Any]:
     handoff = dispatcher.handoff_context(t["id"])
     if handoff:
         db.log_append(t["id"], "daemon", f"handoff to {agent_id}:\n{handoff.strip()}")
+    rs = rulesets.resolve(load_current(), t["project"])
+    db.attempt_update(aid, ruleset=rulesets.label(rs["name"], rs["intensity"]))
     return {"task": dict(t), "attempt_id": aid, "classification": dict(cls) if cls else None,
-            "handoff": handoff, "hub_ssh": cfg.get("daemon.hub_ssh") or cfg.get("daemon.spark_ssh", ""),
+            "handoff": handoff, "ruleset": rs, "hub_ssh": cfg.get("daemon.hub_ssh") or cfg.get("daemon.spark_ssh", ""),
             "spark_ssh": cfg.get("daemon.hub_ssh") or cfg.get("daemon.spark_ssh", "")}
 
 
@@ -395,7 +397,48 @@ def summary() -> dict[str, Any]:
 
 @app.get("/projects", dependencies=[Depends(_auth)])
 def projects() -> dict[str, Any]:
-    return projects_mod.listing()
+    out = projects_mod.listing()
+    cfg = load_current()
+    counts = db.deferred_counts()
+    for name, p in out.items():
+        rs = rulesets.resolve(cfg, name)
+        p["ruleset"] = rulesets.label(rs["name"], rs["intensity"])
+        p["deferred_open"] = counts.get(name, 0)
+    return out
+
+
+@app.get("/projects/{name}/ruleset", dependencies=[Depends(_auth)])
+def project_ruleset(name: str) -> dict[str, Any]:
+    """The ruleset a project's agents work under, with the text that is put in their prompts."""
+    return rulesets.resolve(load_current(), name)
+
+
+@app.get("/projects/{name}/deferred", dependencies=[Depends(_auth)])
+def project_deferred(name: str, include_resolved: bool = False, limit: int = 200) -> dict[str, Any]:
+    """The project's deferred ledger: shortcuts and loose ends agents reported in their handoffs."""
+    items = [dict(r) for r in db.deferred_list(name, include_resolved=include_resolved, limit=limit)]
+    return {"project": name, "items": items, "open": sum(1 for i in items if not i["resolved_at"])}
+
+
+class DeferredResolve(BaseModel):
+    by: str | None = None
+    note: str | None = None
+
+
+@app.post("/deferred/{did}/resolve", dependencies=[Depends(_auth)])
+def deferred_resolve(did: str, body: DeferredResolve) -> dict[str, Any]:
+    row = db.deferred_resolve(did, body.by, body.note)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such deferred item")
+    if row["task_id"]:
+        db.log_append(row["task_id"], "daemon", f"deferred item resolved{' by ' + body.by if body.by else ''}: {row['text'][:120]}")
+    return {"ok": True, "item": dict(row)}
+
+
+@app.get("/stats/rulesets", dependencies=[Depends(_auth)])
+def stats_rulesets() -> dict[str, Any]:
+    """Finished attempts with and without a ruleset: pass rate, lines changed, wall time, untested count."""
+    return {"rows": db.ruleset_stats()}
 
 
 class LocalCopy(BaseModel):
@@ -917,6 +960,7 @@ def retry(tid: str, r: Retry) -> dict[str, Any]:
     if t["worktree"]:
         worktree.remove(tid, t["repo_path"])
     db.run("UPDATE tasks SET attempts = 0, max_attempts = ?, worktree = NULL WHERE id = ?", t["max_attempts"], tid)
+    db.flags_clear(tid)
     if t["kind"] == "session":
         s = sessions.get(tid) or {}
         sessions.update(tid, turn="starting", attention=None, tmux=None, unread=0,
@@ -957,12 +1001,17 @@ def task_diff(tid: str) -> dict[str, Any]:
 
 
 @app.post("/tasks/{tid}/merge", dependencies=[Depends(_auth)])
-def task_merge(tid: str) -> dict[str, Any]:
+def task_merge(tid: str, acknowledge_untested: bool = False) -> dict[str, Any]:
     t = db.task_get(tid)
     if not t:
         raise HTTPException(status_code=404, detail="no such task")
     if t["state"] != "done":
         return {"ok": False, "reason": "only done tasks can be merged"}
+    untested = [f for f in db.flags_get(tid) if f.get("kind") == "untested"]
+    if untested and not acknowledge_untested:
+        return {"ok": False, "reason": "untested: " + untested[-1].get("summary", "") +
+                "; review the diff, then merge with acknowledge_untested=true (or retry the task asking for tests)",
+                "untested": True}
     branch = worktree.task_branch(tid, t["repo_path"])
     import subprocess
     cur = subprocess.run(["git", "-C", t["repo_path"], "rev-parse", "--abbrev-ref", "HEAD"],
@@ -973,6 +1022,9 @@ def task_merge(tid: str) -> dict[str, Any]:
     if r.returncode != 0:
         subprocess.run(["git", "-C", t["repo_path"], "merge", "--abort"], capture_output=True, timeout=10)
         return {"ok": False, "error": (r.stdout + r.stderr).strip()[:1000], "into": cur}
+    if untested:
+        db.flags_clear(tid, "untested")
+        db.log_append(tid, "daemon", "merged although untested (acknowledged by the reviewer)")
     db.log_append(tid, "daemon", f"merged {branch} into {cur}")
     return {"ok": True, "into": cur, "output": r.stdout.strip()[:500]}
 

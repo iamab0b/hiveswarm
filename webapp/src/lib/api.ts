@@ -1,4 +1,4 @@
-import type { Agent, AgentTable, Directive, FeedEntry, LiveStep, InboxItem, LocalInfo, LogEntry, Project, SessionInfo, StatRow, Summary, Task, TaskDetail } from "./types";
+import type { Agent, AgentTable, DeferredItem, Directive, FeedEntry, LiveStep, InboxItem, LocalInfo, LogEntry, Project, RulesetRow, SessionInfo, StatRow, Summary, Task, TaskDetail } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -61,7 +61,12 @@ export const api = {
   sessionViewed: (id: string) => req<{ ok: boolean }>("POST", `/sessions/${id}/viewed`),
   cancel: (id: string) => req<{ ok: boolean; reason?: string }>("POST", `/tasks/${id}/cancel`),
   retry: (id: string, spec?: string | null, acceptance?: string | null) => req<{ ok: boolean; reason?: string }>("POST", `/tasks/${id}/retry`, { spec, acceptance }),
-  merge: (id: string) => req<{ ok: boolean; into?: string; error?: string; reason?: string; output?: string }>("POST", `/tasks/${id}/merge`),
+  merge: (id: string, acknowledgeUntested = false) =>
+    req<{ ok: boolean; into?: string; error?: string; reason?: string; output?: string; untested?: boolean }>("POST", `/tasks/${id}/merge`, undefined, acknowledgeUntested ? { acknowledge_untested: "true" } : undefined),
+  deferred: (project: string, includeResolved = false) =>
+    req<{ project: string; open: number; items: DeferredItem[] }>("GET", `/projects/${project}/deferred`, undefined, includeResolved ? { include_resolved: "true" } : undefined),
+  resolveDeferred: (id: string, note?: string) => req<{ ok: boolean; item: DeferredItem }>("POST", `/deferred/${id}/resolve`, { by: "you", note: note || null }),
+  rulesetStats: () => req<{ rows: RulesetRow[] }>("GET", "/stats/rulesets"),
   remove: (id: string) => req<{ ok: boolean }>("DELETE", `/tasks/${id}`),
   plan: (p: { goal: string; project: string; new_repo: boolean }) =>
     req<{ tasks: { spec: string; acceptance: string | null }[]; error?: string | null }>("POST", "/plan", p),

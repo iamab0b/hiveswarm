@@ -11,7 +11,7 @@ Its loop, from the skill:
 3. **Size the swarm** — `hm_advise(project, tasks)` classifies each task and, from the performance table and the free lanes, recommends headless vs interactive, an agent with a pass estimate, and how many waves the plan takes. The lead tells you in one line what the swarm will look like.
 4. **Dispatch** — `hm_add_tasks` (headless, with an acceptance command that exits 0 only when the work is done) or `hm_new_session` (interactive, when judgment is needed), and a standing order where the work could drift from something paramount.
 5. **Wait** — `hm_wait` until something needs attention, then `hm_inbox`: answer what the goal answers, approve low-risk actions, deny and redirect otherwise; correct or clear `directive` and `stalled` flags; leave what it is unsure about for you.
-6. **Review** — `hm_diff` every finished branch against the spec, `hm_merge` good work, `hm_retry` with a sharper spec otherwise.
+6. **Review** — `hm_diff` every finished branch against the spec, `hm_merge` good work, `hm_retry` with a sharper spec otherwise. A task flagged `untested` (code changed, no test touched or run; see [craft.md](craft.md)) is refused by `hm_merge` until the lead retries it asking for the test or acknowledges the risk after reading the diff.
 7. **Report** — what was merged, what failed and why, what is left; then stop and wait for your next message.
 
 The four companion skills (`hiveswarm-plan`, `-route`, `-review`, `-triage`) go deeper on writing specs and acceptance commands, choosing agents and handling probation and stalls, reading a diff before merging, and working the inbox. Their text is in `src/hiveswarm/lead_skills.py`.
@@ -32,7 +32,8 @@ For Claude Code: `claude mcp add hiveswarm -- hiveswarm-mcp`. `HIVESWARM_ORIGIN`
 |---|---|
 | state | `hm_status`, `hm_projects`, `hm_agents`, `hm_stats`, `hm_list`, `hm_get`, `hm_tail`, `hm_feed`, `hm_live`, `hm_screen` |
 | projects | `hm_new_project`, `hm_delete_project` |
-| tasks | `hm_advise`, `hm_add_tasks`, `hm_wait`, `hm_diff`, `hm_merge`, `hm_retry`, `hm_cancel`, `hm_delete` |
+| tasks | `hm_advise`, `hm_add_tasks`, `hm_wait`, `hm_diff`, `hm_merge` (`acknowledge_untested` for a flagged task), `hm_retry`, `hm_cancel`, `hm_delete` |
+| craft | `hm_deferred`, `hm_deferred_resolve` — the deferred ledger agents fill from their handoffs ([craft.md](craft.md)) |
 | sessions | `hm_new_session`, `hm_sessions`, `hm_inbox`, `hm_send`, `hm_approve`, `hm_deny`, `hm_answer`, `hm_finish`, `hm_continue` |
 | standing orders | `hm_directive`, `hm_directives`, `hm_directive_clear`, `hm_clear_flag` |
 

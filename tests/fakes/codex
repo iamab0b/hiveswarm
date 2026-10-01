@@ -15,6 +15,10 @@ print("Allow command? [y/n]")
 sys.stdout.flush()
 line = sys.stdin.readline()
 print("ok, done. anything else?")
+if "Hiveswarm Craft" in prompt:
+    print("Changed: add.py, appended a note")
+    print("Tested: none (nothing to run for a comment)" if "[skip tests]" in prompt else "Tested: python3 -m pytest -q, 2 passed")
+    print("Deferred: none")
 sys.stdout.flush()
 while True:
     r, _, _ = select.select([sys.stdin], [], [], 1)

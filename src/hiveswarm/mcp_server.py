@@ -88,11 +88,13 @@ def _row(t: dict[str, Any]) -> dict[str, Any]:
         if s.get("attention") and t["state"] not in ("done", "failed", "abandoned"):
             out["attention"] = s["attention"]
     fl = t.get("flags")
-    if fl and t["state"] not in ("done", "failed", "abandoned"):
+    if fl and t["state"] not in ("failed", "abandoned"):
         try:
             flags = json.loads(fl) if isinstance(fl, str) else list(fl)
         except Exception:
             flags = []
+        if t["state"] == "done":  # only the untested flag outlives a task; it blocks hm_merge until reviewed
+            flags = [f for f in flags if f.get("kind") == "untested"]
         if flags:
             out["flags"] = flags
             # a standing-order flag outranks "waiting for input"; a pending permission or question stays in front
@@ -298,9 +300,27 @@ def hm_diff(task_id: str, max_chars: int = 20000) -> dict[str, Any]:
 
 
 @mcp.tool()
-def hm_merge(task_id: str) -> dict[str, Any]:
-    """Merge a done task's branch into the project's current branch on the hub. Review hm_diff first."""
-    return _post(f"/tasks/{task_id}/merge", timeout=180)
+def hm_merge(task_id: str, acknowledge_untested: bool = False) -> dict[str, Any]:
+    """Merge a done task's branch into the project's current branch on the hub. Review hm_diff first. A task flagged
+    `untested` (code changed without a test touched or run) is refused unless acknowledge_untested=True; prefer
+    hm_retry asking for the test, and when you do acknowledge, tell the human why it is safe."""
+    return _req("POST", f"/tasks/{task_id}/merge", {}, timeout=180, acknowledge_untested="true" if acknowledge_untested else None)
+
+
+@mcp.tool()
+def hm_deferred(project: str, include_resolved: bool = False) -> dict[str, Any]:
+    """The project's deferred ledger: shortcuts and loose ends agents reported under Deferred in their handoffs,
+    newest first. Fold the ones that matter into the next wave; hm_deferred_resolve closes an item."""
+    r = _get(f"/projects/{project}/deferred", include_resolved="true" if include_resolved else None)
+    items = [{"id": i["id"], "text": i["text"], "task_id": i["task_id"], "agent": i["agent"], "created_at": i["created_at"],
+              "resolved": bool(i["resolved_at"])} for i in r.get("items", [])]
+    return {"project": project, "open": r.get("open", 0), "items": items}
+
+
+@mcp.tool()
+def hm_deferred_resolve(deferred_id: str, note: str | None = None) -> dict[str, Any]:
+    """Close a deferred item (it was done, or decided against); say why in note."""
+    return _post(f"/deferred/{deferred_id}/resolve", {"by": ORIGIN or "lead", "note": note})
 
 
 @mcp.tool()

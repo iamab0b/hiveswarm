@@ -3,7 +3,7 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { useStore } from "@/lib/store";
-import type { Agent, AgentStatus, AgentTable, Task } from "@/lib/types";
+import type { Agent, AgentStatus, AgentTable, RulesetRow, Task } from "@/lib/types";
 import { age, agentColor, agentLabel, classifyEntry, cn, firstLine, fmtPct, fmtSecs, isLive, sessionOf, short, taskAgent } from "@/lib/utils";
 import { AgentChip, EmptyState, PageHeader, StatusBadge, TaskKindIcon, taskHref } from "@/components/bits";
 import { StateBadge } from "@/components/ui/badge";
@@ -134,11 +134,15 @@ export function HivePage() {
 
 export function StatsPage() {
   const [table, setTable] = useState<AgentTable | null>(null);
+  const [rulesets, setRulesets] = useState<RulesetRow[]>([]);
   const [err, setErr] = useState("");
   const [sort, setSort] = useState<"status" | "agent" | "type" | "wall" | "step">("status");
   useEffect(() => {
     let alive = true;
-    const load = () => api.agentStats().then((t) => alive && setTable(t)).catch((e) => alive && setErr(String(e.message || e)));
+    const load = () => {
+      api.agentStats().then((t) => alive && setTable(t)).catch((e) => alive && setErr(String(e.message || e)));
+      api.rulesetStats().then((r) => alive && setRulesets(r.rows)).catch(() => undefined);
+    };
     load();
     const i = setInterval(load, 15000);
     return () => { alive = false; clearInterval(i); };
@@ -219,6 +223,33 @@ export function StatsPage() {
               </table>
             </Card>
             <div className="mt-2 text-meta">per attempt = wall time from start to verified · per step = one tool call · slow = steps over {table.slow_step_s}s · trend = last few attempts vs the ones before (above 1 is getting slower)</div>
+            {rulesets.length ? (
+              <section className="mt-6">
+                <div className="text-label mb-2">With and without the Craft ruleset</div>
+                <Card className="overflow-x-auto">
+                  <table className="w-full border-collapse text-[13px]">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className={TH}>ruleset</th><th className={cn(TH, "text-right")}>attempts</th><th className={cn(TH, "text-right")}>pass</th><th className={cn(TH, "text-right")}>lines changed</th><th className={cn(TH, "text-right")}>per attempt</th><th className={cn(TH, "text-right")}>untested</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rulesets.map((r) => (
+                        <tr key={r.ruleset} className="h-9 border-b border-border last:border-0">
+                          <td className="px-3 py-1">{r.ruleset}</td>
+                          <td className="num px-3 py-1 text-right">{r.n}</td>
+                          <td className="num px-3 py-1 text-right">{fmtPct(r.pass_rate)}</td>
+                          <td className="num px-3 py-1 text-right">{r.avg_lines === null ? "–" : Math.round(r.avg_lines)}</td>
+                          <td className="num px-3 py-1 text-right">{fmtSecs(r.avg_wall_s)}</td>
+                          <td className="num px-3 py-1 text-right">{r.untested}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </Card>
+                <div className="mt-2 text-meta">lines changed = insertions plus deletions per verified attempt · untested = attempts that changed code without touching or running a test</div>
+              </section>
+            ) : null}
           </>
         )}
       </div>

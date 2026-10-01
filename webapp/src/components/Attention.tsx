@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { Attention } from "@/lib/types";
 import { attentionLabel, cn } from "@/lib/utils";
@@ -101,6 +102,18 @@ export function AttentionPanel({ tid, att, compact, isSession = true, onContinue
             {isSession && onContinue ? <Button size="sm" variant="secondary" disabled={busy} onClick={onContinue} kbd="o">Continue on another agent</Button> : null}
             <Button size="sm" variant="secondary" disabled={busy} onClick={() => run(() => act.clearFlag(tid, "stalled"))}>Keep waiting</Button>
             <span className="text-meta">clears itself the moment the step finishes</span>
+          </div>
+        </div>
+      ) : null}
+
+      {att.kind === "untested" ? (
+        <div className="mt-2 flex flex-col gap-2">
+          {att.detail ? <div className="text-[12px] text-muted">{att.detail}</div> : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to={`/tasks/${tid}?tab=diff`}><Button size="sm" variant="secondary">Open the diff</Button></Link>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => run(async () => { await act.merge(tid, true); })}>Merge anyway</Button>
+            {onContinue ? <Button size="sm" variant="secondary" disabled={busy} onClick={onContinue}>Retry asking for a test</Button> : null}
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(() => act.clearFlag(tid, "untested"))}>Clear</Button>
           </div>
         </div>
       ) : null}

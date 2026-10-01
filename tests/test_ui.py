@@ -27,9 +27,9 @@ def test_lead_page_renders_markdown_tool_calls_and_answers(stack, page):
     try:
         stack.wait_for(lambda: attention(stack, lead) == "question", 90, "the lead's plan question")
         page.goto(page.base + "/lead/demo", wait_until="load")
-        chat = page.locator(".prose-md")
-        chat.first.wait_for(timeout=15000)
-        assert page.locator(".prose-md strong", has_text="Swarm plan").count() == 1, "the lead's markdown is rendered, not shown raw"
+        plan = page.locator(".prose-md strong", has_text="Swarm plan")
+        plan.first.wait_for(timeout=20000)
+        assert plan.count() == 1, "the lead's markdown is rendered, not shown raw"
         assert page.locator(".prose-md li").count() >= 2
         assert page.locator(".prose-md code").count() >= 1
         tools = page.locator("button", has_text="tool call")
@@ -46,3 +46,34 @@ def test_lead_page_renders_markdown_tool_calls_and_answers(stack, page):
         assert not page.errors
     finally:
         stack.post(f"/tasks/{lead}/cancel")
+
+
+@pytest.mark.e2e
+def test_untested_task_waits_in_the_inbox_and_merges_with_an_acknowledgement(stack, page):
+    tid = stack.post("/tasks", {"project": "demo", "spec": "Add a docstring to add() [skip tests]",
+                                "acceptance": "python3 -c 'import add'", "origin": "test", "agent": "claude_code"})["id"]
+    stack.wait_for(lambda: stack.state(tid) == "done", 120, "the task to finish")
+    stack.wait_for(lambda: any(i["id"] == tid for i in stack.get("/inbox")["items"]), 20, "the inbox item")
+    page.goto(page.base + "/inbox", wait_until="load")
+    card = page.locator(".card", has_text=tid[:8]).first
+    card.wait_for(timeout=15000)
+    assert "Untested" in card.inner_text() and "add.py" in card.inner_text()
+    card.locator("button", has_text="Merge anyway").click()
+    stack.wait_for(lambda: not any(i["id"] == tid for i in stack.get("/inbox")["items"]), 30, "the merge to clear the flag")
+    assert "merged although untested" in stack.log_text(tid)
+    assert not page.errors
+
+
+@pytest.mark.e2e
+def test_deferred_items_show_on_the_lead_page(stack, page):
+    tid = stack.post("/tasks", {"project": "demo", "spec": "Add a docstring to add() [defer: move add() into math.py]",
+                                "acceptance": "python3 -c 'import add'", "origin": "test", "agent": "claude_code"})["id"]
+    stack.wait_for(lambda: stack.state(tid) == "done", 120, "the task to finish")
+    stack.wait_for(lambda: any(i["task_id"] == tid for i in stack.get("/projects/demo/deferred")["items"]), 20, "the ledger entry")
+    page.goto(page.base + "/lead/demo", wait_until="load")
+    row = page.locator("[data-deferred-count] >> text=move add() into math.py").first
+    row.wait_for(timeout=15000)
+    row.hover()
+    page.locator("[data-deferred-count] button", has_text="resolve").first.click()
+    stack.wait_for(lambda: not any(i["task_id"] == tid for i in stack.get("/projects/demo/deferred")["items"]), 20, "the item to be resolved")
+    assert not page.errors

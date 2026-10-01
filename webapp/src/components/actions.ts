@@ -84,11 +84,22 @@ export const act = {
       fail(e);
     }
   },
-  merge: async (id: string) => {
+  merge: async (id: string, acknowledgeUntested = false) => {
     try {
-      const r = await api.merge(id);
+      const r = await api.merge(id, acknowledgeUntested);
       if (r.ok) toast.success(`Merged ${short(id)} into ${r.into}`);
+      else if (r.untested) toast.warning(`${short(id)} is untested: review the diff, then "merge anyway", or retry asking for a test`);
       else toast.error(r.error || r.reason || "merge failed");
+      return r.ok;
+    } catch (e) {
+      fail(e);
+      return false;
+    }
+  },
+  resolveDeferred: async (id: string, note?: string) => {
+    try {
+      await api.resolveDeferred(id, note);
+      toast("Resolved");
     } catch (e) {
       fail(e);
     }

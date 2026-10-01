@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from typing import Any
 
 import httpx
@@ -139,6 +140,28 @@ def cmd_agents(a: argparse.Namespace) -> None:
         print(f"{r['agent_id']:14} {(r['host'] or '')[:16]:16} {'yes' if r['alive'] else 'no':6} {busy:8} {wanted:7} {', '.join(r['capabilities'])}")
 
 
+def cmd_deferred(a: argparse.Namespace) -> None:
+    if a.resolve:
+        r = _post(f"/deferred/{a.resolve}/resolve", {"by": "you", "note": a.note})
+        print(f"resolved: {r['item']['text']}")
+        return
+    projects = [a.project] if a.project else list((_get("/projects") or {}).keys())
+    shown = 0
+    for name in projects:
+        r = _get(f"/projects/{name}/deferred", include_resolved="true" if a.all else None)
+        items = r.get("items") or []
+        if not items:
+            continue
+        print(f"{name}: {r.get('open', 0)} open")
+        for it in items:
+            mark = "x" if it.get("resolved_at") else " "
+            when = time.strftime("%m-%d %H:%M", time.localtime(it["created_at"]))
+            print(f"  [{mark}] {it['id']}  {when}  {it.get('agent') or '-':12} {it['text']}")
+            shown += 1
+    if not shown:
+        print("nothing deferred" + (f" in {a.project}" if a.project else "") + "; agents report shortcuts under Deferred in their handoff and they land here")
+
+
 def cmd_stats(a: argparse.Namespace) -> None:
     t = _get("/stats/agents")
     cells = t.get("cells") or []
@@ -157,6 +180,12 @@ def cmd_stats(a: argparse.Namespace) -> None:
         print(f"{c['agent']:14} {c['task_type']:12} {c['status']:8} {c['n']:>3} {_pct(c.get('pass_rate')):>5} {_secs(c.get('avg_wall_s')):>7} "
               f"{_secs(c.get('avg_step_s')):>6} {_secs(c.get('p90_step_s')):>6} {_pct(c.get('slow_step_rate')):>5} {trend:>5}  {c.get('why') or ''}")
     print(f"\nslow step = one tool call over {t.get('slow_step_s', 120)}s; slow/failing agents get only easy work of that type until they recover")
+    rows = (_get("/stats/rulesets") or {}).get("rows") or []
+    if len(rows) > 1 or (rows and rows[0]["ruleset"] != "off"):
+        print(f"\n{'ruleset':14} {'n':>3} {'pass':>5} {'lines':>6} {'wall':>7} {'untested':>8}")
+        for r in rows:
+            lines = f"{r['avg_lines']:.0f}" if r.get("avg_lines") is not None else "-"
+            print(f"{r['ruleset']:14} {r['n']:>3} {_pct(r.get('pass_rate')):>5} {lines:>6} {_secs(r.get('avg_wall_s')):>7} {r.get('untested', 0):>8}")
 
 
 def _pct(v: Any) -> str:
@@ -600,6 +629,13 @@ def main() -> None:
 
     s = sub.add_parser("stats", help="routing table")
     s.set_defaults(fn=cmd_stats)
+
+    s = sub.add_parser("deferred", help="the deferred ledger: shortcuts agents reported in their handoffs; --resolve ID closes one")
+    s.add_argument("project", nargs="?", default=None)
+    s.add_argument("--all", action="store_true", help="include resolved items")
+    s.add_argument("--resolve", metavar="ID", default=None)
+    s.add_argument("--note", default=None, help="why it is resolved (with --resolve)")
+    s.set_defaults(fn=cmd_deferred)
 
     s = sub.add_parser("agents", help="registered agents, their lanes and liveness; --set changes an agent's lanes live")
     s.add_argument("--set", nargs=2, metavar=("AGENT", "LANES"), help="e.g. --set claude_code 5, or --set codex auto for the worker's config")

@@ -277,6 +277,8 @@ class SessionHost:
             if live.lead:
                 argv += ["--mcp-config", self.lead_mcp_config(live)]
                 self.install_lead_skill(env["CLAUDE_CONFIG_DIR"])
+            from .. import rulesets
+            adapters.install_skills(env["CLAUDE_CONFIG_DIR"], {"hiveswarm-craft": rulesets.CRAFT_SKILL_MD})
             if resume_id:
                 argv += ["--resume", resume_id]
             else:
@@ -325,15 +327,7 @@ class SessionHost:
     @staticmethod
     def install_lead_skill(config_dir: str) -> None:
         from .. import lead_skills
-        for name, text in {"hiveswarm-lead": _lead.SKILL_MD, **lead_skills.SKILLS}.items():
-            try:
-                d = Path(config_dir) / "skills" / name
-                d.mkdir(parents=True, exist_ok=True)
-                f = d / "SKILL.md"
-                if not f.exists() or f.read_text() != text:
-                    f.write_text(text)
-            except Exception as e:
-                log.warning("could not install the %s skill: %s", name, e)
+        adapters.install_skills(config_dir, {"hiveswarm-lead": _lead.SKILL_MD, **lead_skills.SKILLS})
 
     def run_session(self, agent: str, acfg: dict[str, Any], task: dict[str, Any], sess: dict[str, Any],
                     attempt_id: str | None, wt: Path, mirror: Path, ship: Any, cancel: threading.Event) -> str:
@@ -435,6 +429,9 @@ class SessionHost:
         parts.append("\nYou are working in a dedicated git worktree that Hiveswarm manages. Do not commit or push; "
                      "Hiveswarm commits when the user finishes the session. Ask the user (AskUserQuestion) before "
                      "making design decisions that were not specified.")
+        rules = adapters.ruleset_text(task)
+        if rules:
+            parts.append("\n" + rules)
         if os.path.isdir(os.path.join(self._wt_for(task), ".wiki")):
             parts.append(adapters.WIKI_NOTE)
         return "\n".join(parts)

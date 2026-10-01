@@ -4,9 +4,9 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowUpRight } from "lucide-react";
 import { useStore } from "@/lib/store";
 import type { Task } from "@/lib/types";
-import { age, agentLabel, cn, elapsed, firstLine, isLive, isTerminal, liveAttention, sessionOf, short, taskAgent } from "@/lib/utils";
+import { age, agentLabel, cn, elapsed, firstLine, isLive, isTerminal, liveAttention, sessionOf, short, taskAgent, untestedFlag } from "@/lib/utils";
 import { AgentChip, AgentDot, EmptyState, PageHeader, StepTimer, TaskKindIcon, taskHref } from "@/components/bits";
-import { StateBadge } from "@/components/ui/badge";
+import { Badge, StateBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { AttentionPanel } from "@/components/Attention";
@@ -89,6 +89,7 @@ export default function Swarm() {
   const [wall, setWall] = useState(() => localStorage.getItem("hm.wall") === "1");
   const [cont, setCont] = useState<string | null>(null);
   const [retry, setRetry] = useState<string | null>(null);
+  const nav = useNavigate();
   const now = useNow();
   useEffect(() => localStorage.setItem("hm.wall", wall ? "1" : "0"), [wall]);
 
@@ -171,8 +172,9 @@ export default function Swarm() {
                   <AgentChip agent={taskAgent(t)} size="sm" session={t.kind === "session"} lead={!!sessionOf(t).lead} />
                   <Link to={taskHref(t)} className="mono text-muted hover:text-fg">{short(t.id)}</Link>
                   <Link to={taskHref(t)} className="min-w-0 flex-1 truncate text-[13px] hover:underline underline-offset-2">{firstLine(t.spec, 110)}</Link>
+                  {untestedFlag(t) ? <Badge tone="accent">untested</Badge> : null}
                   <span className="num text-meta">{age(t.updated_at, now)}</span>
-                  {t.state === "done" ? <Button size="xs" variant="secondary" onClick={() => act.merge(t.id)}>merge</Button> : null}
+                  {t.state === "done" ? <Button size="xs" variant="secondary" onClick={() => (untestedFlag(t) ? nav(taskHref(t)) : act.merge(t.id))}>{untestedFlag(t) ? "review" : "merge"}</Button> : null}
                   {t.state !== "done" ? <Button size="xs" variant="ghost" onClick={() => setRetry(t.id)}>retry</Button> : null}
                 </div>
               ))}

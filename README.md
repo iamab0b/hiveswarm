@@ -122,6 +122,7 @@ With the hub configured, the desktop app starts only a worker and the app on the
 - [docs/config.md](docs/config.md) — every key in `config.toml` and `worker.toml`
 - [docs/two-machines.md](docs/two-machines.md) — hub + workers, systemd units, a local model box, network diagnostics (`hm net`)
 - [docs/lead.md](docs/lead.md) — the lead agent, its MCP tools and skills, standing orders
+- [docs/craft.md](docs/craft.md) — the Craft ruleset every agent works under: the ladder, tests, the handoff, the deferred ledger, the untested flag
 - [docs/adapters.md](docs/adapters.md) — add your own agent as a plugin
 - [docs/architecture.md](docs/architecture.md) — how the pieces talk, the data model, the routing math
 - [DESIGN.md](DESIGN.md) — how the app looks and behaves: tokens, components, page patterns, what not to do

@@ -139,7 +139,12 @@ change is the one that was asked for, nothing more, nothing worse.
    - copied code where a standing order forbade it, or new dependencies where none were allowed
    - unrelated reformatting that will make later merges conflict
 4. Standing orders (`hm_directives`): confirm the diff honours each one that applied to this lane.
-5. `hm_tail(task_id)` when the diff looks odd: what the agent said it did, and what the verifier printed.
+5. `hm_tail(task_id)` when the diff looks odd: what the agent said it did, and what the verifier printed. The
+   agent's last message is its handoff (Changed / Tested / Deferred): check Changed against the diff, believe
+   Tested only if the verifier agrees, and read Deferred for shortcuts that should become tasks.
+6. An `untested` flag (`hm_get` shows it; `hm_merge` refuses it) means code changed with no test touched and no
+   test run. Prefer `hm_retry` with "add a test for X next to the existing tests" over merging; merge with
+   `acknowledge_untested=true` only for changes you can see are safe (a string, a docstring, a log line) and say so.
 
 ## Decide
 

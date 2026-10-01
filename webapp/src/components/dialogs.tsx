@@ -336,7 +336,7 @@ export function ConfirmDialog({ open, onOpenChange, title, body, confirmLabel = 
   body?: string;
   confirmLabel?: string;
   danger?: boolean;
-  onConfirm: () => void | Promise<void>;
+  onConfirm: () => void | Promise<unknown>;
 }) {
   const go = async () => { await onConfirm(); onOpenChange(false); };
   return (

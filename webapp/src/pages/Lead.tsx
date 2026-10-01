@@ -15,6 +15,7 @@ import { Input, Textarea, Tip } from "@/components/ui/fields";
 import { AttentionPanel } from "@/components/Attention";
 import { Terminal } from "@/components/Terminal";
 import { StandingOrders } from "@/components/StandingOrders";
+import { DeferredList } from "@/components/Deferred";
 import { DeleteProjectDialog } from "@/components/dialogs";
 import { act } from "@/components/actions";
 
@@ -424,8 +425,9 @@ export default function LeadPage() {
               }) : <div className="px-2 py-6 text-center text-[12px] text-dim">tasks and sessions the lead dispatches appear here</div>}
             </div>
             {project ? (
-              <div className="max-h-[42%] shrink-0 overflow-y-auto border-t border-border p-3">
+              <div className="grid max-h-[50%] shrink-0 gap-4 overflow-y-auto border-t border-border p-3">
                 <StandingOrders project={project} title="Project standing orders" />
+                <DeferredList project={project} />
               </div>
             ) : null}
           </aside>

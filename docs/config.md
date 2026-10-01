@@ -90,6 +90,16 @@ The token is not in the file: set `HIVESWARM_TOKEN` (in `~/.hiveswarm/env`). Wit
 | `verify_mode`, `verify_network` | from `[verify]` | per-project overrides |
 | `posture` | `decide.posture` | |
 | `acceptance_templates` | `[]` | suggestions shown in the New goal dialog |
+| `ruleset`, `ruleset_intensity` | from `[rulesets]` | `"craft"` or `"off"`; `"standard"` or `"strict"` (see [craft.md](craft.md)) |
+
+### `[rulesets]`
+
+| key | default | |
+|---|---|---|
+| `default` | `"craft"` | the ruleset every project's agents work under unless the project says otherwise; `"off"` for none |
+| `intensity` | `"standard"` | `"strict"` adds: no new dependencies, no new files unless named, stop rather than widen the scope |
+
+Changes to `config.toml` are picked up without a restart. [craft.md](craft.md) has the rules, the handoff format, the deferred ledger and the `untested` flag.
 
 ### `[workers.prime_agent]`, `[workers.local_direct]`, `[inference]`
 

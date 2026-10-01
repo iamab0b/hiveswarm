@@ -2,7 +2,7 @@ export type TaskState =
   | "pending" | "classifying" | "classified" | "assigned" | "claimed" | "running" | "verifying"
   | "done" | "failed" | "blocked" | "abandoned";
 
-export type AttentionKind = "permission" | "question" | "input" | "usage_limit" | "handoff" | "failed" | "directive" | "stalled";
+export type AttentionKind = "permission" | "question" | "input" | "usage_limit" | "handoff" | "failed" | "directive" | "stalled" | "untested";
 
 export interface Attention {
   kind: AttentionKind;
@@ -191,6 +191,31 @@ export interface Project {
   head?: string | null;
   branch?: string | null;
   local?: LocalCopy | null;
+  ruleset?: string;
+  deferred_open?: number;
+}
+
+export interface DeferredItem {
+  id: string;
+  project: string;
+  task_id: string | null;
+  attempt_id: string | null;
+  agent: string | null;
+  text: string;
+  created_at: number;
+  resolved_at: number | null;
+  resolved_by: string | null;
+  note: string | null;
+}
+
+export interface RulesetRow {
+  ruleset: string;
+  n: number;
+  passes: number;
+  pass_rate: number | null;
+  avg_lines: number | null;
+  avg_wall_s: number | null;
+  untested: number;
 }
 
 export interface LocalInfo {

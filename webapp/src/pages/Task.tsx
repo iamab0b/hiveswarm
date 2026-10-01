@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { api } from "@/lib/api";
 import { useStore, useTask } from "@/lib/store";
 import type { TaskDetail } from "@/lib/types";
-import { cn, elapsed, firstLine, flagAttention, fmtSecs, isTerminal, taskAgent } from "@/lib/utils";
+import { cn, elapsed, firstLine, flagAttention, fmtSecs, isTerminal, taskAgent, untestedFlag } from "@/lib/utils";
 import { AgentChip, EmptyState, SectionTitle, StepTimer } from "@/components/bits";
 import { StateBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -105,7 +105,7 @@ export default function TaskPage() {
   const agent = taskAgent(t);
   const ended = isTerminal(t.state);
   const c = detail?.classification;
-  const flag = !ended ? flagAttention(t) : null;
+  const flag = !ended ? flagAttention(t) : untestedFlag(t);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-1.5">
@@ -135,7 +135,7 @@ export default function TaskPage() {
         <TabsContent value="overview" className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto grid max-w-5xl gap-5 px-6 py-5 lg:grid-cols-[1fr_320px]">
             <div className="grid gap-5">
-              {flag ? <AttentionPanel tid={id} att={flag} isSession={false} onCancel={() => setConfirm("cancel")} /> : null}
+              {flag ? <AttentionPanel tid={id} att={flag} isSession={false} onCancel={() => setConfirm("cancel")} onContinue={flag.kind === "untested" ? () => setRetry(true) : undefined} /> : null}
               <div>
                 <SectionTitle>Spec</SectionTitle>
                 <div className="card whitespace-pre-wrap p-4 text-[13px] leading-5">{t.spec.trim()}</div>
@@ -205,7 +205,7 @@ export default function TaskPage() {
       <RetryDialog task={t} lastError={lastErr} open={retry} onOpenChange={setRetry} />
       <ConfirmDialog open={confirm === "cancel"} onOpenChange={(o) => !o && setConfirm(null)} title={`Cancel ${t.id.slice(0, 8)}?`} body="This kills the running agent." confirmLabel="Cancel task" danger onConfirm={() => act.cancel(t)} />
       <ConfirmDialog open={confirm === "delete"} onOpenChange={(o) => !o && setConfirm(null)} title={`Delete ${t.id.slice(0, 8)}?`} body="Removes the record and its worktree. This cannot be undone." confirmLabel="Delete" danger onConfirm={() => act.remove(id)} />
-      <ConfirmDialog open={confirm === "merge"} onOpenChange={(o) => !o && setConfirm(null)} title={`Merge hiveswarm/${t.id.slice(0, 8)}?`} body="Into the project's current branch on the hub." confirmLabel="Merge" onConfirm={() => act.merge(id)} />
+      <ConfirmDialog open={confirm === "merge"} onOpenChange={(o) => !o && setConfirm(null)} title={`Merge hiveswarm/${t.id.slice(0, 8)}?`} body={flag?.kind === "untested" ? `Into the project's current branch on the hub. This task is flagged untested: ${flag.summary}.` : "Into the project's current branch on the hub."} confirmLabel={flag?.kind === "untested" ? "Merge anyway" : "Merge"} onConfirm={() => act.merge(id, flag?.kind === "untested")} />
     </div>
   );
 }

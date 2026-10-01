@@ -43,6 +43,8 @@ DEFAULTS: dict[str, Any] = {
     "sessions.risk_gate": "pattern",
     "sessions.auto_approve_max_risk": "low",
     "workers.prime_agent.enabled": False,
+    "rulesets.default": "craft",
+    "rulesets.intensity": "standard",
 }
 
 
@@ -100,6 +102,26 @@ def load_fresh() -> Config:
 @lru_cache(maxsize=1)
 def load() -> Config:
     return load_fresh()
+
+
+_current: tuple[str, float, Config] | None = None
+
+
+def load_current() -> Config:
+    """The config as it is on disk now: re-read when the file changed, otherwise the cached copy.
+
+    For settings a running daemon should pick up without a restart (a project's ruleset, say)."""
+    global _current
+    try:
+        path = config_path()
+        mtime = path.stat().st_mtime
+    except (FileNotFoundError, OSError):
+        return load()
+    if _current and _current[0] == str(path) and _current[1] == mtime:
+        return _current[2]
+    cfg = load_fresh()
+    _current = (str(path), mtime, cfg)
+    return cfg
 
 
 def env_secret(name: str) -> str | None:

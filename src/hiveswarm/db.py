@@ -48,7 +48,8 @@ _COLUMNS = {
     "agents": [("capacity", "INTEGER NOT NULL DEFAULT 1"), ("desired_capacity", "INTEGER"), ("provider", "TEXT")],
     "tasks": [("kind", "TEXT NOT NULL DEFAULT 'task'"), ("session", "TEXT"), ("preferred_agent", "TEXT"), ("flags", "TEXT")],
     "attempts": [("steps", "INTEGER"), ("step_avg_s", "REAL"), ("step_p90_s", "REAL"), ("step_max_s", "REAL"),
-                 ("slow_steps", "INTEGER"), ("silence_max_s", "REAL"), ("first_action_s", "REAL"), ("think_avg_s", "REAL")],
+                 ("slow_steps", "INTEGER"), ("silence_max_s", "REAL"), ("first_action_s", "REAL"), ("think_avg_s", "REAL"),
+                 ("ruleset", "TEXT"), ("lines_changed", "INTEGER"), ("untested", "INTEGER"), ("handoff", "TEXT")],
 }
 
 
@@ -277,6 +278,13 @@ def attempt_start(tid: str, agent: str, model: str | None) -> str:
     return aid
 
 
+def attempt_update(aid: str, **fields: Any) -> None:
+    if not fields:
+        return
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    run(f"UPDATE attempts SET {sets} WHERE id = ?", *fields.values(), aid)
+
+
 def attempt_latest(tid: str) -> sqlite3.Row | None:
     return one("SELECT * FROM attempts WHERE task_id = ? ORDER BY started_at DESC LIMIT 1", tid)
 
@@ -304,6 +312,66 @@ def attempt_finish(aid: str, outcome: str, **fields: Any) -> None:
 
 def attempts_for(tid: str) -> list[sqlite3.Row]:
     return all_("SELECT * FROM attempts WHERE task_id = ? ORDER BY started_at", tid)
+
+
+def attempt_messages(tid: str, agent: str, since: int) -> list[str]:
+    """What the agent said (its `msg` log lines) during an attempt, oldest first."""
+    rows = all_("SELECT chunk FROM task_logs WHERE task_id = ? AND source = ? AND ts >= ? ORDER BY seq",
+                tid, f"{agent}:msg", since)
+    return [r["chunk"] for r in rows]
+
+
+def ruleset_stats() -> list[dict[str, Any]]:
+    """Finished attempts grouped by the ruleset they ran under: how often they passed, how much they changed."""
+    rows = all_("""SELECT COALESCE(ruleset, 'off') AS ruleset, COUNT(*) AS n,
+                          SUM(CASE WHEN outcome = 'pass' THEN 1 ELSE 0 END) AS passes,
+                          AVG(lines_changed) AS avg_lines, AVG(wall_seconds) AS avg_wall,
+                          SUM(CASE WHEN untested = 1 THEN 1 ELSE 0 END) AS untested
+                   FROM attempts WHERE outcome IS NOT NULL AND outcome != 'abandoned'
+                   GROUP BY COALESCE(ruleset, 'off') ORDER BY n DESC""")
+    return [{"ruleset": r["ruleset"], "n": r["n"], "passes": r["passes"],
+             "pass_rate": (r["passes"] / r["n"]) if r["n"] else None,
+             "avg_lines": r["avg_lines"], "avg_wall_s": r["avg_wall"], "untested": r["untested"]} for r in rows]
+
+
+# ── deferred ledger ─────────────────────────────────────────────────────
+
+def deferred_add(project: str, task_id: str, attempt_id: str | None, agent: str | None, items: list[str]) -> list[str]:
+    ids = []
+    t = now()
+    with tx() as c:
+        for text in items:
+            text = (text or "").strip()[:300]
+            if not text:
+                continue
+            did = new_id()
+            c.execute("INSERT INTO deferred (id, project, task_id, attempt_id, agent, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (did, project, task_id, attempt_id, agent, text, t))
+            ids.append(did)
+    return ids
+
+
+def deferred_list(project: str | None = None, include_resolved: bool = False, limit: int = 200) -> list[sqlite3.Row]:
+    clauses, params = [], []
+    if project:
+        clauses.append("project = ?")
+        params.append(project)
+    if not include_resolved:
+        clauses.append("resolved_at IS NULL")
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    return all_(f"SELECT * FROM deferred {where} ORDER BY created_at DESC LIMIT ?", *params, limit)
+
+
+def deferred_resolve(did: str, by: str | None, note: str | None = None) -> sqlite3.Row | None:
+    row = one("SELECT * FROM deferred WHERE id = ?", did)
+    if row is None:
+        return None
+    run("UPDATE deferred SET resolved_at = ?, resolved_by = ?, note = ? WHERE id = ?", now(), by, note, did)
+    return one("SELECT * FROM deferred WHERE id = ?", did)
+
+
+def deferred_counts() -> dict[str, int]:
+    return {r["project"]: r["n"] for r in all_("SELECT project, COUNT(*) AS n FROM deferred WHERE resolved_at IS NULL GROUP BY project")}
 
 
 def stats_update(agent: str, task_type: str, diff_band: int, passed: bool, weight: float, usd: float | None, quota: float | None, seconds: float | None) -> None:

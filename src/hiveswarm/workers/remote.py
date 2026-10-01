@@ -191,6 +191,7 @@ def _session_of(task: dict[str, Any]) -> dict[str, Any]:
 
 def run_session_task(client: Client, cfg: dict[str, Any], agent_id: str, claim: dict[str, Any]) -> None:
     task = claim["task"]
+    task["ruleset"] = claim.get("ruleset")
     aid = claim["attempt_id"]
     sess = _session_of(task)
     root = Path(os.path.expanduser(cfg.get("root", "~/.hiveswarm"))).resolve()
@@ -297,6 +298,7 @@ def run_one(client: Client, cfg: dict[str, Any], agent_id: str, claim: dict[str,
         run_session_task(client, cfg, agent_id, claim)
         return
     aid = claim["attempt_id"]
+    task["ruleset"] = claim.get("ruleset")
     handoff = claim.get("handoff", "")
     try:
         from .. import directives as _directives

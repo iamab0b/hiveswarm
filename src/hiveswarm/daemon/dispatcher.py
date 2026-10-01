@@ -5,9 +5,9 @@ import threading
 import traceback
 from typing import Any
 
-from .. import db, perf, sessions, worktree
+from .. import db, perf, rulesets, sessions, worktree
 from ..classify import classify_task, diff_band
-from ..config import load
+from ..config import load, load_current
 from ..router import roundrobin as router
 from ..verify import runner as verifier
 from ..workers import local_direct, prime_agent
@@ -123,7 +123,9 @@ def _run_local(task: Any, cls: dict[str, Any] | None, agent: str) -> None:
         handoff = handoff_context(task["id"])
         if handoff:
             db.log_append(task["id"], "daemon", f"handoff to {agent}:\n{handoff.strip()}")
-        spec_with_context = handoff + task["spec"]
+        rs = rulesets.resolve(load_current(), task["project"])
+        db.attempt_update(aid, ruleset=rulesets.label(rs["name"], rs["intensity"]))
+        spec_with_context = handoff + task["spec"] + (("\n\n" + rs["text"]) if rs["text"] else "")
         res = worker.run({**dict(task), "spec": spec_with_context}, wt)
         cur = db.task_get(task["id"])
         if cur is None or cur["state"] == "abandoned":
@@ -155,11 +157,39 @@ def verify_and_finalize(tid: str, aid: str, wt: str, cls: dict[str, Any] | None,
         db.log_append(tid, "verifier", line)
     db.log_append(tid, "daemon", f"verifier result: {outcome}")
     passed = outcome in ("pass", "soft")
+    craft = _read_handoff(task, aid, agent, res.get("diff_stat"), passed)
     db.attempt_finish(aid, "pass" if outcome == "soft" else outcome,
                       verifier_log=v.get("log"), diff_stat=res.get("diff_stat"),
                       tokens_in=res.get("tokens_in"), tokens_out=res.get("tokens_out"),
-                      branch=res.get("branch"))
+                      branch=res.get("branch"), **craft)
     finalize(tid, cls, agent, passed=passed, weight=v.get("weight", 1.0))
+
+
+def _read_handoff(task: Any, aid: str, agent: str, stat: str | None, passed: bool) -> dict[str, Any]:
+    """Read the agent's Changed / Tested / Deferred handoff back: ledger entries, the untested flag, lines changed."""
+    out: dict[str, Any] = {"lines_changed": rulesets.lines_changed(stat)}
+    try:
+        att = db.one("SELECT started_at, ruleset FROM attempts WHERE id = ?", aid)
+        active = bool(att and att["ruleset"] and att["ruleset"] != "off")
+        msgs = db.attempt_messages(task["id"], agent, int(att["started_at"]) if att else 0)
+        handoff = rulesets.parse_handoff("\n".join(msgs[-12:]))
+        out["handoff"] = rulesets.handoff_json(handoff)
+        if not active or not passed:
+            out["untested"] = 0
+            return out
+        if handoff["deferred"]:
+            ids = db.deferred_add(task["project"], task["id"], aid, agent, handoff["deferred"])
+            db.log_append(task["id"], "daemon", f"deferred ({len(ids)}): " + " | ".join(handoff["deferred"][:5]))
+        reason = rulesets.untested_reason(task["acceptance"], stat, handoff)
+        out["untested"] = 1 if reason else 0
+        if reason:
+            db.flag_add(task["id"], "untested", reason,
+                        detail="Tested: " + ("; ".join(handoff["tested"]) if handoff["tested"] else "(nothing reported)"),
+                        ref=aid)
+            db.log_append(task["id"], "daemon", f"untested: {reason}")
+    except Exception as e:  # the handoff is advisory; never fail the attempt over it
+        log.warning("handoff for %s: %s", task["id"], e)
+    return out
 
 
 def finalize(tid: str, cls: dict[str, Any] | None, agent: str, passed: bool, weight: float) -> None:
