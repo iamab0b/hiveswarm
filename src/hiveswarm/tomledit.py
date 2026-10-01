@@ -6,10 +6,33 @@ writing, and emits only the value kinds the config uses (strings, numbers, boole
 sub-tables)."""
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 import tomllib
 from pathlib import Path
 from typing import Any
+
+
+def atomic_write(path: Path, text: str) -> None:
+    """Write the whole file through a temporary file and rename, so a reader (the daemon re-reading config.toml
+    on change, a worker watching worker.toml) never sees a truncated file."""
+    path = Path(path)
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        try:
+            os.chmod(tmp, path.stat().st_mode & 0o777)
+        except FileNotFoundError:
+            pass
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def fmt(value: Any) -> str:
@@ -71,7 +94,7 @@ def write_section(path: Path, section: str, values: dict[str, Any] | None) -> di
     else:
         return tomllib.loads(text)
     parsed = tomllib.loads(new)
-    path.write_text(new)
+    atomic_write(path, new)
     return parsed
 
 

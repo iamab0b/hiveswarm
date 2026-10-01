@@ -626,8 +626,7 @@ class LaneManager:
             except OSError:
                 now_m = None
             if path and now_m != self.cfg.get("_mtime"):
-                self.cfg["_mtime"] = now_m
-                self.reload()
+                self.reload()  # records the new mtime itself, so a half-written file is retried next tick
             try:
                 rows = self.client.get("/agents", timeout=20) or []
             except Exception:

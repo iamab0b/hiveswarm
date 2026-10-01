@@ -74,7 +74,8 @@ def _remove_config_section(name: str) -> bool:
     end = m.end() + nxt.start() if nxt else len(text)
     new = (text[:m.start()].rstrip("\n") + "\n\n" + text[end:].lstrip("\n")).rstrip("\n") + "\n"
     tomllib.loads(new)
-    path.write_text(new)
+    from . import tomledit
+    tomledit.atomic_write(path, new)
     load.cache_clear()
     return True
 

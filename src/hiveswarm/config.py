@@ -108,7 +108,7 @@ def load() -> Config:
     return load_fresh()
 
 
-_current: tuple[str, float, Config] | None = None
+_current: tuple[str, tuple[int, int], Config] | None = None
 
 
 def load_current() -> Config:
@@ -118,13 +118,17 @@ def load_current() -> Config:
     global _current
     try:
         path = config_path()
-        mtime = path.stat().st_mtime
+        st = path.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
     except (FileNotFoundError, OSError):
         return load()
-    if _current and _current[0] == str(path) and _current[1] == mtime:
+    if _current and _current[0] == str(path) and _current[1] == stamp:
         return _current[2]
-    cfg = load_fresh()
-    _current = (str(path), mtime, cfg)
+    try:
+        cfg = load_fresh()
+    except Exception:  # mid-write by another process: serve what we had rather than an empty config
+        return _current[2] if _current else load()
+    _current = (str(path), stamp, cfg)
     return cfg
 
 

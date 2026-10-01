@@ -733,11 +733,12 @@ def project_add(p: ProjectAdd) -> dict[str, Any]:
     block = f'[projects.{name}]\nrepo_path = "{repo}"\nverify_image = "{image}"\n'
     if p.acceptance_templates:
         block += f"acceptance_templates = {json.dumps(p.acceptance_templates)}\n"
+    from .. import tomledit
     path = config_path()
     text = path.read_text()
     new = text.rstrip("\n") + "\n\n" + block
     tomllib.loads(new)
-    path.write_text(new)
+    tomledit.atomic_write(path, new)
     load.cache_clear()
     return {"ok": True, "name": name, "repo_path": str(repo), "created": created, "verify_image": image}
 
