@@ -222,7 +222,7 @@ if opts["mcp-config"]:
                     tool_result(json.dumps(adv)[:300])
                     picks = [(t["agent"] or "claude_code", t["mode"]) for t in adv["tasks"]]
                     shape = ", ".join(f"{p[1]} on {p[0]}" for p in picks)
-                    assistant(f"Swarm plan: {len(planned)} tasks ({shape}); {adv['summary']}")
+                    assistant(f"**Swarm plan**: {len(planned)} tasks\n- " + "\n- ".join(f"{p[1]} on `{p[0]}`" for p in picks) + f"\n\n{adv['summary']}")
                     q = ask("Ship it as one wave, or wait for your review after the first task?", ["One wave, go", "Pause after task 1"], header="Plan")
                     tasks = [{"spec": planned[i]["spec"], "acceptance": "python3 -c 'import add'", "agent": picks[i][0]} for i in range(len(planned))]
                     if q.startswith("Pause"):

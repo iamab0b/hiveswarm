@@ -110,7 +110,7 @@ timeout = 300
             "HIVESWARM_WORKER_CONFIG": str(home / "worker.toml"),
             "HIVESWARM_TOKEN": self.token,
             "HIVESWARM_URL": f"http://127.0.0.1:{self.port}",
-            "PATH": f"{FAKES}:{os.environ.get('PATH', '')}",
+            "PATH": f"{FAKES}:{Path(sys.executable).parent}:{os.environ.get('PATH', '')}",
             "PYTHONPATH": str(ROOT / "src"),
             "FAKE_STEP": "0.2",
             "PYTHONUNBUFFERED": "1",

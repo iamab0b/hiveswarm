@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Crown, KeyboardIcon, Loader2, Sparkles, Users, Trash2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import type { Task } from "@/lib/types";
@@ -164,7 +164,7 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent wide={!!plan}>
-        <DialogHeader title="New goal" description="Say what you want. Choose how the swarm should run it." />
+        <DialogHeader title="New goal" description="Say what you want and choose how the swarm runs it." />
         <DialogBody className="max-h-[70vh] overflow-y-auto">
           <div className="grid gap-4" onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submit(); }}>
             <div className="grid grid-cols-[1fr_1fr] gap-3">
@@ -181,7 +181,7 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
             </div>
             <div>
               <Label hint="⌘⏎ to start">Goal</Label>
-              <Textarea value={goal} onChange={(e) => setGoal(e.target.value)} rows={5} placeholder="Add rate limiting to the API: a token bucket per user, config in settings.toml, tests for the limits…" autoFocus={!isNew} />
+              <Textarea value={goal} onChange={(e) => setGoal(e.target.value)} rows={5} placeholder="Add rate limiting to the API: a token bucket per user, config in settings.toml, tests for the limits" autoFocus={!isNew} />
             </div>
             <div>
               <Label>Run as</Label>
@@ -189,10 +189,10 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
                 value={mode}
                 onChange={(m) => { setMode(m); setPlan(null); }}
                 options={[
-                  { value: "tasks", label: <span className="inline-flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5" />Tasks</span>, hint: "plan it, agents work headless" },
-                  { value: "lead", label: <span className="inline-flex items-center gap-1.5"><Crown className="h-3.5 w-3.5 text-accent" />Lead</span>, hint: "Claude Code commands the swarm; you steer it" },
-                  { value: "swarm", label: <span className="inline-flex items-center gap-1.5"><Users className="h-3.5 w-3.5" />Swarm</span>, hint: "plan it, one live session per subtask" },
-                  { value: "session", label: <span className="inline-flex items-center gap-1.5"><KeyboardIcon className="h-3.5 w-3.5" />Session</span>, hint: "one live session with this prompt" },
+                  { value: "tasks", label: "Tasks", hint: "plan it, agents work headless" },
+                  { value: "lead", label: "Lead", hint: "Claude Code commands the swarm; you steer it" },
+                  { value: "swarm", label: "Swarm", hint: "plan it, one live session per subtask" },
+                  { value: "session", label: "Session", hint: "one live session with this prompt" },
                 ]}
               />
             </div>
@@ -218,15 +218,15 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
               <Switch checked={review} onChange={(v) => { setReview(v); if (!v) setPlan(null); }} label="Let me review the plan before anything starts" />
             ) : null}
             {planning ? (
-              <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-[12.5px] text-muted">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Planning with Claude Code… 20–60 seconds
+              <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] text-muted">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Planning with Claude Code, 20–60 seconds
               </div>
             ) : null}
             {plan ? (
               <div className="grid gap-2">
-                <div className="text-[12px] text-muted">{plan.filter((p) => p.include).length} of {plan.length} planned {mode === "swarm" ? "sessions" : "tasks"} selected — edit inline, untick what you don't want.</div>
+                <div className="text-[12px] text-muted">{plan.filter((p) => p.include).length} of {plan.length} planned {mode === "swarm" ? "sessions" : "tasks"} selected. Edit inline; untick what you don't want.</div>
                 {plan.map((p, i) => (
-                  <div key={i} className="rounded-lg border border-border bg-surface-2 p-3">
+                  <div key={i} className="rounded-md border border-border p-3">
                     <div className="mb-2 flex items-center justify-between">
                       <Switch checked={p.include} onChange={(v) => setPlan(plan.map((x, j) => (j === i ? { ...x, include: v } : x)))} label={`#${i + 1}`} />
                       <Button size="xs" variant="ghost" onClick={() => setPlan(plan.filter((_, j) => j !== i))}><Trash2 className="h-3 w-3" /></Button>
@@ -241,7 +241,7 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button variant="accent" disabled={!canGo} onClick={submit}>
+          <Button variant="primary" disabled={!canGo} onClick={submit}>
             {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
             {mode === "lead" ? "Start the lead" : mode === "session" ? (count > 1 ? `Open ${count} sessions` : "Open session") : review && !plan ? "Plan" : mode === "swarm" ? "Plan & open sessions" : "Start"}
           </Button>
@@ -271,12 +271,12 @@ export function RetryDialog({ task, lastError, open, onOpenChange }: { task: Tas
           {lastError ? (
             <div>
               <Label>Last verifier output</Label>
-              <pre className="mono max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-danger/30 bg-danger/8 p-2 text-[11.5px] text-danger">{lastError.slice(-2000)}</pre>
+              <pre className="mono max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border border-l-2 border-l-danger bg-surface-2 p-2 text-muted">{lastError.slice(-2000)}</pre>
             </div>
           ) : null}
           <div>
             <Label>{isSession ? "New instructions (optional)" : "Spec"}</Label>
-            <Textarea rows={isSession ? 3 : 6} value={spec} onChange={(e) => setSpec(e.target.value)} placeholder={isSession ? "Pick up where you left off…" : undefined} />
+            <Textarea rows={isSession ? 3 : 6} value={spec} onChange={(e) => setSpec(e.target.value)} placeholder={isSession ? "Pick up where you left off" : undefined} />
           </div>
           <div>
             <Label hint="exits 0 when done">Acceptance</Label>
@@ -285,7 +285,7 @@ export function RetryDialog({ task, lastError, open, onOpenChange }: { task: Tas
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button variant="accent" onClick={async () => { await act.retry(task.id, isSession ? (spec.trim() || null) : spec, acc.trim() || null); onOpenChange(false); }}>
+          <Button variant="primary" onClick={async () => { await act.retry(task.id, isSession ? (spec.trim() || null) : spec, acc.trim() || null); onOpenChange(false); }}>
             {isSession ? "Reopen" : "Retry"}
           </Button>
         </DialogFooter>
@@ -322,7 +322,7 @@ export function ContinueDialog({ task, open, onOpenChange }: { task: Task | null
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button variant="accent" onClick={async () => { await act.continueOn(task.id, agent, perm); onOpenChange(false); }}>Continue</Button>
+          <Button variant="primary" onClick={async () => { await act.continueOn(task.id, agent, perm); onOpenChange(false); }}>Continue</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -345,7 +345,7 @@ export function ConfirmDialog({ open, onOpenChange, title, body, confirmLabel = 
         <DialogHeader title={title} description={body} />
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} kbd="esc">Cancel</Button>
-          <Button data-confirm variant={danger ? "danger" : "accent"} onClick={go} kbd="⏎">{confirmLabel}</Button>
+          <Button data-confirm variant={danger ? "destructive-fill" : "primary"} onClick={go} kbd="⏎">{confirmLabel}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -368,18 +368,18 @@ export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader title="Keys" description="Everything is also clickable; these are the fast paths." />
+        <DialogHeader title="Keyboard" description="Everything is also clickable; these are the fast paths." />
         <DialogBody className="grid gap-5 sm:grid-cols-2">
           <div>
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-dim">Anywhere</div>
+            <div className="text-label mb-2">Anywhere</div>
             <div className="grid gap-1.5">
-              {KEYS.map(([k, v]) => (<div key={k} className="flex items-center gap-3 text-[12.5px]"><kbd className="key min-w-[44px]">{k}</kbd><span className="text-muted">{v}</span></div>))}
+              {KEYS.map(([k, v]) => (<div key={k} className="flex items-center gap-3 text-[12px]"><kbd className="key min-w-[44px]">{k}</kbd><span className="text-muted">{v}</span></div>))}
             </div>
           </div>
           <div>
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-dim">On a session</div>
+            <div className="text-label mb-2">On a session</div>
             <div className="grid gap-1.5">
-              {SESSION_KEYS.map(([k, v]) => (<div key={k} className="flex items-center gap-3 text-[12.5px]"><kbd className="key min-w-[44px]">{k}</kbd><span className="text-muted">{v}</span></div>))}
+              {SESSION_KEYS.map(([k, v]) => (<div key={k} className="flex items-center gap-3 text-[12px]"><kbd className="key min-w-[44px]">{k}</kbd><span className="text-muted">{v}</span></div>))}
             </div>
           </div>
         </DialogBody>
@@ -436,7 +436,7 @@ export function DeleteProjectDialog({ name, repoPath, localPath, open, onOpenCha
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} kbd="esc">Cancel</Button>
-          <Button variant="danger" onClick={go} disabled={busy || !name}><Trash2 className="h-3.5 w-3.5" /> {purge ? "Remove and delete files" : "Remove from Hiveswarm"}</Button>
+          <Button variant="destructive-fill" onClick={go} disabled={busy || !name}><Trash2 className="h-3.5 w-3.5" /> {purge ? "Remove and delete files" : "Remove from Hiveswarm"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

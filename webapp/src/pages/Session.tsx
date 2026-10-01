@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Group, Panel, Separator } from "react-resizable-panels";
-import { ArrowLeft, Crown, GitMerge, KeyboardIcon, RotateCcw, ScrollText, Send, Square, TerminalSquare, Trash2, Waypoints } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { useStore, useTask } from "@/lib/store";
 import { api } from "@/lib/api";
-import { agentColor, agentLabel, cn, elapsed, firstLine, flagAttention, isTerminal, sessionOf } from "@/lib/utils";
+import { agentLabel, cn, elapsed, firstLine, flagAttention, isTerminal, sessionOf } from "@/lib/utils";
 import { AgentChip, EmptyState, SectionTitle, StepTimer } from "@/components/bits";
-import { Badge, StateBadge } from "@/components/ui/badge";
+import { StateBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Tip } from "@/components/ui/fields";
 import { AttentionPanel } from "@/components/Attention";
@@ -83,7 +83,6 @@ export default function SessionPage() {
     return <EmptyState title="Session not found" hint="It may have been deleted, or the daemon hasn't reported it yet." action={<Link to="/"><Button>Back to the swarm</Button></Link>} />;
   }
   const agent = sess.agent || t.claimed_by;
-  const color = agentColor(agent);
   const send = async () => {
     const v = text.trim();
     if (!v) return;
@@ -95,37 +94,36 @@ export default function SessionPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2" style={{ boxShadow: `inset 0 -2px 0 0 ${color}` }}>
+      <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-1.5">
         <Link to="/" className="rounded-md p-1 text-muted hover:bg-surface-2 hover:text-fg"><ArrowLeft className="h-4 w-4" /></Link>
-        {sess.lead ? <Crown className="h-4 w-4 text-accent" /> : <KeyboardIcon className="h-4 w-4 text-success" />}
         <AgentChip agent={agent} lead={!!sess.lead} session />
-        <span className="mono text-[12.5px] text-muted">{t.id.slice(0, 8)}</span>
-        {sess.name ? <span className="mono text-[11.5px] text-dim">{sess.name}</span> : null}
-        <StateBadge state={t.state} live />
-        {!ended && sess.turn ? <Badge tone={sess.turn === "waiting" ? "warn" : sess.turn === "idle" ? "success" : sess.turn === "working" ? "info" : "dim"} dot={sess.turn === "working"}>{sess.turn}</Badge> : null}
-        <Badge tone="dim">{sess.permission_mode || "auto"}</Badge>
+        <span className="mono text-muted">{t.id.slice(0, 8)}</span>
+        {sess.name ? <span className="mono text-dim">{sess.name}</span> : null}
+        <StateBadge state={t.state} live attention={!!att} />
+        {!ended && sess.turn && !att ? <span className="text-meta">{sess.turn}</span> : null}
+        <span className="text-meta">{sess.permission_mode || "auto"}</span>
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={t.spec}>{firstLine(t.spec, 120)}</span>
         {!ended ? <StepTimer entries={entries} agent={agent} now={now} className="max-w-[320px]" /> : null}
-        <span className="num hidden text-[11.5px] text-dim lg:inline">{elapsed(sess.started_at || t.updated_at, now)} · turns {sess.turns || 0} · asks {sess.asks || 0} · auto-ok {sess.auto_approved || 0}</span>
+        <span className="num hidden text-meta lg:inline">{elapsed(sess.started_at || t.updated_at, now)} · {sess.turns || 0} turns · {sess.asks || 0} asks · {sess.auto_approved || 0} auto-ok</span>
         <div className="flex items-center gap-1">
           {!ended ? (
             <>
-              <Tip label="Commit, push, verify, close the terminal"><Button size="sm" variant="accent" onClick={() => setConfirm("finish")} kbd="F">Finish</Button></Tip>
-              <Tip label="Hand over to another agent with its work and context"><Button size="sm" variant="secondary" onClick={() => setCont(true)} kbd="o"><Waypoints className="h-3.5 w-3.5" /> Continue on…</Button></Tip>
-              <Tip label="Kill the agent"><Button size="sm" variant="ghost" className="text-danger" onClick={() => setConfirm("cancel")} kbd="c"><Square className="h-3.5 w-3.5" /></Button></Tip>
+              <Tip label="Commit, push, verify, close the terminal"><Button size="sm" variant="primary" onClick={() => setConfirm("finish")} kbd="F">Finish</Button></Tip>
+              <Tip label="Hand over to another agent with its work and context"><Button size="sm" variant="secondary" onClick={() => setCont(true)} kbd="o">Continue on…</Button></Tip>
+              <Tip label="Kill the agent"><Button size="sm" variant="ghost" className="hover:text-danger" onClick={() => setConfirm("cancel")} kbd="c">Cancel</Button></Tip>
             </>
           ) : (
             <>
-              {t.state === "done" ? <Button size="sm" variant="success" onClick={() => setConfirm("merge")}><GitMerge className="h-3.5 w-3.5" /> Merge</Button> : null}
-              <Button size="sm" variant="secondary" onClick={() => setRetry(true)}><RotateCcw className="h-3.5 w-3.5" /> Reopen</Button>
-              <Button size="sm" variant="ghost" className="text-danger" onClick={() => setConfirm("delete")}><Trash2 className="h-3.5 w-3.5" /></Button>
+              {t.state === "done" ? <Button size="sm" variant="primary" onClick={() => setConfirm("merge")}>Merge</Button> : null}
+              <Button size="sm" variant="secondary" onClick={() => setRetry(true)}>Reopen</Button>
+              <Button size="sm" variant="ghost" className="hover:text-danger" onClick={() => setConfirm("delete")}>Delete</Button>
             </>
           )}
         </div>
       </div>
 
       {att || flag ? (
-        <div className="grid shrink-0 gap-2 border-b border-border bg-surface px-4 py-2.5">
+        <div className="grid shrink-0 gap-2 border-b border-border bg-surface px-4 py-3">
           {flag ? <AttentionPanel tid={id} att={flag} onCancel={() => setConfirm("cancel")} onContinue={() => setCont(true)} /> : null}
           {att ? <AttentionPanel tid={id} att={att} onContinue={() => setCont(true)} onFinish={() => setConfirm("finish")} /> : null}
         </div>
@@ -138,11 +136,11 @@ export default function SessionPage() {
               {ended ? (
                 <div className="flex h-full min-h-0 flex-col overflow-y-auto p-4">
                   <SectionTitle>Result</SectionTitle>
-                  <div className="card mb-4 p-3 text-[13px]">
-                    {t.state === "done" ? <span className="text-success">Finished and verified · branch <span className="mono">hiveswarm/{t.id}</span></span> : null}
+                  <div className="card mb-4 p-4 text-[13px]">
+                    {t.state === "done" ? <span><span className="text-success">Finished and verified</span> · branch <span className="mono">hiveswarm/{t.id}</span></span> : null}
                     {t.state === "failed" ? <span className="text-danger">Failed{detailErr ? ":" : ""}</span> : null}
-                    {t.state === "abandoned" ? <span className="text-muted">Cancelled{sess.continued_in ? <> — continued in <Link className="mono underline" to={`/sessions/${sess.continued_in}`}>{sess.continued_in.slice(0, 8)}</Link></> : ""}</span> : null}
-                    {detailErr && t.state === "failed" ? <pre className="mono mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-bg/60 p-2 text-[11.5px] text-muted">{detailErr.slice(-3000)}</pre> : null}
+                    {t.state === "abandoned" ? <span className="text-muted">Cancelled{sess.continued_in ? <>, continued in <Link className="mono underline" to={`/sessions/${sess.continued_in}`}>{sess.continued_in.slice(0, 8)}</Link></> : ""}</span> : null}
+                    {detailErr && t.state === "failed" ? <pre className="mono mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-2 text-muted">{detailErr.slice(-3000)}</pre> : null}
                   </div>
                   {t.state === "done" ? <DiffView id={id} /> : null}
                 </div>
@@ -150,36 +148,36 @@ export default function SessionPage() {
                 <Terminal tid={id} dark={theme === "dark"} className="h-full" />
               ) : (
                 <div className="flex h-full items-center justify-center p-6">
-                  <EmptyState icon={<TerminalSquare className="h-8 w-8" />} title={sess.host ? `Terminal lives on ${sess.host}` : "Not started yet"} hint={sess.host ? "Run hm ui on that machine to see and type into it. The event stream on the right works from anywhere." : `Waiting for a free ${agentLabel(agent)} lane on a worker.`} />
+                  <EmptyState title={sess.host ? `The terminal is on ${sess.host}` : "Not started yet"} hint={sess.host ? "Open the app on that machine to see and type into it. The event stream on the right works from anywhere." : `Waiting for a free ${agentLabel(agent)} lane on a worker.`} />
                 </div>
               )}
               {!ended ? (
                 <form className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-3 py-2" onSubmit={(e) => { e.preventDefault(); send(); }}>
                   <Input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)}
-                    placeholder={att?.kind === "question" ? "type your own answer…" : att?.kind === "permission" ? "deny with a message: what to do instead…" : "message for this agent · t to focus · enter sends · esc back"}
+                    placeholder={att?.kind === "question" ? "type your own answer" : att?.kind === "permission" ? "deny with a message: what to do instead" : "message for this agent · t to focus · enter sends · esc back"}
                     className="h-8" />
-                  <Button type="submit" size="md" variant="secondary" disabled={!text.trim()}><Send className="h-3.5 w-3.5" /> Send</Button>
+                  <Button type="submit" size="md" variant="secondary" disabled={!text.trim()}>Send</Button>
                 </form>
               ) : null}
             </div>
           </Panel>
-          <Separator className="w-px bg-border transition-colors hover:bg-accent data-[state=active]:bg-accent" />
+          <Separator className="w-px bg-border transition-colors hover:bg-border-strong data-[state=active]:bg-accent" />
           <Panel defaultSize="38" minSize="20" className="min-h-0">
-            <div className="flex h-full min-h-0 flex-col bg-surface/40">
-              <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-[12px] text-muted">
-                <button className={cn("rounded-sm px-1 font-medium", !orders ? "text-fg" : "text-muted hover:text-fg")} onClick={() => setOrders(false)}>Events</button>
-                <button className={cn("flex items-center gap-1 rounded-sm px-1 font-medium", orders ? "text-fg" : "text-muted hover:text-fg")} onClick={() => setOrders(true)}><ScrollText className="h-3.5 w-3.5" /> Standing orders</button>
+            <div className="flex h-full min-h-0 flex-col bg-surface">
+              <div className="flex h-9 shrink-0 items-center gap-3 border-b border-border px-3 text-[12px]">
+                <button type="button" className={cn("text-label rounded-sm", !orders ? "text-fg" : "hover:text-fg")} onClick={() => setOrders(false)}>Events</button>
+                <button type="button" className={cn("text-label rounded-sm", orders ? "text-fg" : "hover:text-fg")} onClick={() => setOrders(true)}>Standing orders</button>
                 <span className="flex-1" />
-                <span className="num text-dim">{entries.length}</span>
+                <span className="num text-meta">{entries.length}</span>
               </div>
               <div className="min-h-0 flex-1">
                 {orders ? (
                   <div className="h-full overflow-y-auto p-3">
                     <StandingOrders taskId={id} project={t.project} />
-                    <div className="mt-3 text-[11.5px] leading-relaxed text-dim">Orders sit at the top of the agent's prompt and are re-injected on the cadence shown: Claude Code gets them mid-turn through hooks; other agents get them typed in between turns. With auditing on, a likely violation appears above and in the inbox.</div>
+                    <div className="mt-3 text-[12px] leading-[18px] text-dim">Orders sit at the top of the agent's prompt and are re-injected on the cadence shown: Claude Code gets them mid-turn through hooks; other agents get them typed in between turns. With auditing on, a likely violation appears above and in the inbox.</div>
                   </div>
                 ) : (
-                  <EventStream entries={entries} emptyText="waiting for the first event…" />
+                  <EventStream entries={entries} emptyText="waiting for the first event" />
                 )}
               </div>
             </div>

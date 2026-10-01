@@ -124,6 +124,7 @@ With the hub configured, the desktop app starts only a worker and the app on the
 - [docs/lead.md](docs/lead.md) — the lead agent, its MCP tools and skills, standing orders
 - [docs/adapters.md](docs/adapters.md) — add your own agent as a plugin
 - [docs/architecture.md](docs/architecture.md) — how the pieces talk, the data model, the routing math
+- [DESIGN.md](DESIGN.md) — how the app looks and behaves: tokens, components, page patterns, what not to do
 - [docs/RELEASE.md](docs/RELEASE.md) — the v0.1 release plan
 
 ## Status

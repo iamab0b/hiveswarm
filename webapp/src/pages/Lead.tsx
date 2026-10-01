@@ -2,13 +2,14 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Crown, FolderOpen, FolderPlus, Loader2, RefreshCw, RotateCcw, SendHorizontal, Sparkles, TerminalSquare, Trash2, Waypoints } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronRight, FolderPlus, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { api, leadApi } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import type { FeedEntry, Task } from "@/lib/types";
-import { age, agentColor, agentLabel, classifyEntry, clock, cn, firstLine, isLive, isTerminal, liveAttention, sessionOf, short, taskAgent } from "@/lib/utils";
-import { AgentChip, EmptyState, TaskKindIcon, taskHref } from "@/components/bits";
+import { age, agentLabel, classifyEntry, cn, firstLine, isLive, isTerminal, liveAttention, sessionOf, short, taskAgent } from "@/lib/utils";
+import { AgentChip, AgentDot, EmptyState, TaskKindIcon, taskHref } from "@/components/bits";
 import { Badge, StateBadge } from "@/components/ui/badge";
+import { Markdown } from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea, Tip } from "@/components/ui/fields";
 import { AttentionPanel } from "@/components/Attention";
@@ -100,47 +101,57 @@ function toMessages(entries: FeedEntry[]): Msg[] {
   return out;
 }
 
-function Bubble({ m }: { m: Msg }) {
+function Speaker({ who }: { who: "you" | "lead" }) {
+  return <div className={cn("text-label w-12 shrink-0 pt-0.5 text-right", who === "you" ? "text-fg" : "")}>{who === "you" ? "You" : "Lead"}</div>;
+}
+
+/** One turn of the conversation as a document: a speaker label on the left, the content on the right. */
+function Turn({ m }: { m: Msg }) {
   const [open, setOpen] = useState(false);
   if (m.kind === "you") {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-2xl rounded-br-md bg-accent/15 px-3.5 py-2 text-[13.5px] leading-relaxed text-fg ring-1 ring-accent/25 whitespace-pre-wrap">{m.text}</div>
+      <div className="flex gap-4">
+        <Speaker who="you" />
+        <div className="min-w-0 flex-1 whitespace-pre-wrap text-[13px] leading-5 text-fg">{m.text}</div>
       </div>
     );
   }
   if (m.kind === "lead") {
     return (
-      <div className="flex items-start gap-2.5">
-        <span className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-3 text-accent"><Crown className="h-3.5 w-3.5" /></span>
-        <div className="max-w-[82%] rounded-2xl rounded-tl-md bg-surface-2 px-3.5 py-2 text-[13.5px] leading-relaxed text-fg ring-1 ring-border whitespace-pre-wrap">{m.text}</div>
+      <div className="flex gap-4">
+        <Speaker who="lead" />
+        <Markdown text={m.text} className="min-w-0 flex-1" />
       </div>
     );
   }
   if (m.kind === "tools") {
     return (
-      <div className="pl-[34px]">
-        <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11.5px] text-dim hover:bg-surface-2 hover:text-muted">
-          {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-          {m.items.length} tool call{m.items.length === 1 ? "" : "s"}: <span className="mono">{m.items.map((i) => i.tool.split(":")[0]).slice(0, 4).join(" · ")}{m.items.length > 4 ? " …" : ""}</span>
-        </button>
-        {open ? (
-          <div className="mt-1 grid gap-1 rounded-md border border-border bg-bg/40 p-2">
-            {m.items.map((it, i) => (
-              <div key={i} className="mono text-[11.5px]">
-                <span className="text-info">▸ {it.tool}</span>
-                {it.result ? <div className="mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap text-muted">{it.result.slice(0, 600)}</div> : null}
-              </div>
-            ))}
-          </div>
-        ) : null}
+      <div className="flex gap-4">
+        <div className="w-12 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <button type="button" onClick={() => setOpen((v) => !v)} className="mono flex items-center gap-1.5 rounded-sm text-dim hover:text-muted">
+            {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            {m.items.length} tool call{m.items.length === 1 ? "" : "s"} · {m.items.map((i) => i.tool.split(":")[0]).slice(0, 4).join(", ")}{m.items.length > 4 ? ", …" : ""}
+          </button>
+          {open ? (
+            <div className="mt-1.5 grid gap-1.5 rounded-md border border-border bg-surface-2 p-2">
+              {m.items.map((it, i) => (
+                <div key={i} className="mono">
+                  <span className="text-fg">▸ {it.tool}</span>
+                  {it.result ? <div className="mt-0.5 max-h-32 overflow-auto whitespace-pre-wrap text-muted">{it.result.slice(0, 800)}</div> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
     );
   }
-  const tone = m.tone === "good" ? "text-success" : m.tone === "bad" ? "text-danger" : m.tone === "warn" || m.tone === "ask" ? "text-warn" : "text-dim";
+  const tone = m.tone === "good" ? "text-success" : m.tone === "bad" ? "text-danger" : m.tone === "warn" ? "text-accent" : m.tone === "ask" ? "text-muted" : "text-dim";
   return (
-    <div className="flex justify-center">
-      <span className={cn("rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px]", tone)}>{m.taskId ? <Link to={`/t/${m.taskId}`} className="hover:underline">{m.text}</Link> : m.text}</span>
+    <div className="flex gap-4">
+      <div className="w-12 shrink-0" />
+      <div className={cn("min-w-0 flex-1 text-[12px]", tone)}>{m.taskId ? <Link to={`/t/${m.taskId}`} className="hover:underline">{m.text}</Link> : m.text}</div>
     </div>
   );
 }
@@ -275,79 +286,76 @@ export default function LeadPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [lead?.id, att]);
 
-  const turnTone = sess.turn === "working" ? "info" : sess.turn === "waiting" ? "warn" : sess.turn === "idle" ? "success" : "dim";
   const leadEnded = !!lead && isTerminal(lead.state);
   const leadQueued = !!lead && !leadEnded && !sess.host;
 
   return (
     <div className="flex h-full min-h-0">
-      <aside className="flex w-[232px] shrink-0 flex-col border-r border-border bg-surface/60">
-        <div className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-dim">Projects</div>
+      <aside className="flex w-[220px] shrink-0 flex-col border-r border-border bg-surface">
+        <div className="text-label px-4 pb-1 pt-4">Projects</div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2">
           {names.map((n) => {
             const l = tasks.find((t) => t.kind === "session" && t.project === n && sessionOf(t).lead && sessionOf(t).persistent && !isTerminal(t.state));
             const la = l ? liveAttention(l) : null;
             const live = tasks.filter((t) => t.project === n && isLive(t) && t.id !== l?.id).length;
             return (
-              <div key={n} className={cn("group mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px]", n === project ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2/60 hover:text-fg")}>
-                <button onClick={() => nav(`/lead/${n}`)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                  <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", la ? "bg-warn live-dot" : l ? "bg-success" : "bg-dim")} />
+              <div key={n} className={cn("group mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors duration-150", n === project ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg")}>
+                <button type="button" onClick={() => nav(`/lead/${n}`)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                  <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", la ? "bg-accent" : l ? "bg-success" : "bg-dim")} />
                   <span className="min-w-0 flex-1 truncate">{n}</span>
-                  {live ? <span className="num text-[10.5px] text-dim">{live}</span> : null}
+                  {live ? <span className="num text-meta">{live}</span> : null}
                 </button>
-                <Tip label="Remove this project from Hiveswarm"><button onClick={() => setDel(n)} className="-mr-1 rounded p-0.5 text-dim opacity-0 hover:text-danger group-hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></button></Tip>
+                <Tip label="Remove this project from Hiveswarm"><button type="button" onClick={() => setDel(n)} className="-mr-1 rounded p-0.5 text-dim opacity-0 hover:text-danger group-hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></button></Tip>
               </div>
             );
           })}
-          {!names.length ? <div className="px-2 py-3 text-[12px] text-dim">No projects yet — create one below.</div> : null}
+          {!names.length ? <div className="px-2 py-3 text-[12px] text-dim">No projects yet. Create one below.</div> : null}
         </div>
         <div className="border-t border-border p-2">
           <div className="flex items-center gap-1">
-            <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="new project…" className="h-7 text-[12px]" onKeyDown={(e) => { if (e.key === "Enter") createProject(); }} />
+            <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="new project" className="h-7 text-[12px]" onKeyDown={(e) => { if (e.key === "Enter") createProject(); }} />
             <Tip label="Create an empty repo on the hub"><Button size="icon-sm" variant="ghost" onClick={createProject} disabled={creating || !newName.trim()}>{creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderPlus className="h-3.5 w-3.5" />}</Button></Tip>
           </div>
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex shrink-0 items-center gap-2 border-b border-border bg-surface px-4 py-2">
-          <Crown className="h-4 w-4 text-accent" />
-          <span className="text-[13.5px] font-semibold">Lead</span>
-          <span className="text-[12.5px] text-muted">for <b className="text-fg">{project || "—"}</b></span>
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-surface px-4">
+          <span className="text-[13px] font-semibold">Lead</span>
+          <span className="text-[13px] text-muted">for <span className="text-fg">{project || "—"}</span></span>
           {lead ? (
             <>
-              <Link to={`/sessions/${lead.id}`} className="mono text-[11.5px] text-dim hover:text-fg">{short(lead.id)}</Link>
-              {leadEnded ? <StateBadge state={lead.state} /> : leadQueued ? <Badge tone="dim">waiting for a lane</Badge> : <Badge tone={turnTone as never} dot={sess.turn === "working"}>{sess.turn}</Badge>}
-              <span className="num text-[11px] text-dim">turns {sess.turns || 0}</span>
+              <Link to={`/sessions/${lead.id}`} className="mono text-dim hover:text-fg">{short(lead.id)}</Link>
+              {leadEnded ? <StateBadge state={lead.state} /> : leadQueued ? <Badge tone="dim">waiting for a lane</Badge> : <Badge tone={att ? "accent" : "neutral"} live={sess.turn === "working"}>{att ? "needs you" : sess.turn}</Badge>}
+              <span className="num text-meta">{sess.turns || 0} turns</span>
             </>
           ) : <Badge tone="dim">not started</Badge>}
           <span className="flex-1" />
           {lead && !leadEnded ? (
             <>
-              <Button size="sm" variant={showTerm ? "secondary" : "ghost"} onClick={() => setShowTerm((v) => !v)} disabled={!hasTerm}><TerminalSquare className="h-3.5 w-3.5" /> terminal</Button>
-              <Tip label="Kill the lead (its memory survives; the next message reopens it)"><Button size="sm" variant="ghost" className="text-danger" onClick={() => act.cancel(lead)}>stop</Button></Tip>
+              <Button size="sm" variant="ghost" className={cn(showTerm && "bg-surface-2 text-fg")} onClick={() => setShowTerm((v) => !v)} disabled={!hasTerm}>terminal</Button>
+              <Tip label="Kill the lead (its memory survives; the next message reopens it)"><Button size="sm" variant="ghost" className="hover:text-danger" onClick={() => act.cancel(lead)}>stop</Button></Tip>
             </>
           ) : null}
-          {lead && leadEnded ? <Button size="sm" variant="secondary" onClick={() => leadApi.talk(project!).then(() => toast("Reopening the lead")).catch((e) => toast.error(String(e.message)))}><RotateCcw className="h-3.5 w-3.5" /> reopen</Button> : null}
+          {lead && leadEnded ? <Button size="sm" variant="secondary" onClick={() => leadApi.talk(project!).then(() => toast("Reopening the lead")).catch((e) => toast.error(String(e.message)))}>reopen</Button> : null}
         </div>
 
         {project ? (
-          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface/60 px-4 py-1.5 text-[12px]">
-            <FolderOpen className="h-3.5 w-3.5 text-muted" />
+          <div className="flex h-9 shrink-0 items-center gap-2 overflow-hidden border-b border-border bg-surface px-4 text-[12px]">
             {copy ? (
               <>
-                <span className="text-muted">{copy.host === local?.hostname ? "files on this machine:" : `files on ${copy.host}:`}</span>
-                <button onClick={openFolder} className="mono text-fg hover:underline underline-offset-2" title={copy.win_path || copy.path}>{copy.path.replace(/^\/home\/[^/]+/, "~")}</button>
-                {copy.note ? <span className={cn("text-[11.5px]", copy.dirty || copy.ahead ? "text-warn" : "text-dim")}>· {copy.note}</span> : null}
-                {copy.synced_at ? <span className="text-[11px] text-dim">· checked {age(copy.synced_at)} ago</span> : null}
+                <span className="text-muted">{copy.host === local?.hostname ? "on this machine" : `on ${copy.host}`}</span>
+                <button type="button" onClick={openFolder} className="mono truncate text-fg hover:underline underline-offset-2" title={copy.win_path || copy.path}>{copy.path.replace(/^\/home\/[^/]+/, "~")}</button>
+                {copy.note ? <span className={cn("truncate", copy.dirty || copy.ahead ? "text-accent" : "text-dim")}>· {copy.note}</span> : null}
+                {copy.synced_at ? <span className="text-meta">· checked {age(copy.synced_at)} ago</span> : null}
               </>
             ) : (
-              <span className="text-dim">no local copy yet — the worker makes one within a minute (local_projects in worker.toml)</span>
+              <span className="text-dim">no local copy yet; the worker makes one within a minute (local_projects in worker.toml)</span>
             )}
             <span className="flex-1" />
-            {copy ? <Tip label="Reveal the folder in Explorer"><Button size="xs" variant="ghost" onClick={openFolder}><FolderOpen className="h-3 w-3" /> open folder</Button></Tip> : null}
-            <Tip label="Fast-forward this machine's copy from the hub now"><Button size="xs" variant="ghost" onClick={syncNow} disabled={syncing}><RefreshCw className={cn("h-3 w-3", syncing && "animate-spin")} /> sync now</Button></Tip>
-            <span className="mono text-[11px] text-dim" title="the canonical repository, on the hub">hub: {proj?.repo_path}</span>
+            {copy ? <Button size="xs" variant="ghost" onClick={openFolder}>open folder</Button> : null}
+            <Tip label="Fast-forward this machine's copy from the hub now"><Button size="xs" variant="ghost" onClick={syncNow} disabled={syncing}><RefreshCw className={cn("h-3 w-3", syncing && "animate-spin")} /> sync</Button></Tip>
+            <span className="mono hidden truncate text-dim xl:inline" title="the canonical repository, on the hub">hub: {proj?.repo_path}</span>
           </div>
         ) : null}
 
@@ -357,66 +365,66 @@ export default function LeadPage() {
               <div className="min-h-0 flex-1"><Terminal tid={lead.id} dark={theme === "dark"} className="h-full" /></div>
             ) : (
               <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-                <div className="mx-auto flex max-w-3xl flex-col gap-3 px-5 py-5">
+                <div className="mx-auto flex max-w-[760px] flex-col gap-4 px-6 py-6">
                   {!lead ? (
-                    <EmptyState icon={<Sparkles className="h-8 w-8" />} title={project ? `Tell the lead what ${project} needs` : "Pick or create a project"} hint="It reads the repo, plans, asks the decide model and the routing data how big the swarm should be and who should do what, dispatches, watches, reviews and merges — and tells you here. Even a one-line fix goes through the swarm so it's verified." />
+                    <EmptyState title={project ? `Tell the lead what ${project} needs` : "Pick or create a project"} hint="It reads the repo, plans, asks the decide model and the routing data how big the swarm should be and who should do what, dispatches, watches, reviews and merges, and tells you here. Even a one-line fix goes through the swarm so it is verified." />
                   ) : null}
-                  {lead && messages.length === 0 ? <div className="text-center text-[12.5px] text-dim">{leadQueued ? "the lead is queued behind other work; your message is kept for it" : "starting…"}</div> : null}
+                  {lead && messages.length === 0 ? <div className="text-center text-[12px] text-dim">{leadQueued ? "the lead is queued behind other work; your message is kept for it" : "starting"}</div> : null}
                   <AnimatePresence initial={false}>
                     {messages.map((m) => (
-                      <motion.div key={m.id} layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}>
-                        <Bubble m={m} />
+                      <motion.div key={m.id} layout initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.15, ease: "easeOut" }}>
+                        <Turn m={m} />
                       </motion.div>
                     ))}
                   </AnimatePresence>
                   {lead && !leadEnded && sess.turn === "working" ? (
-                    <div className="flex items-center gap-2 pl-[34px] text-[12px] text-dim"><Loader2 className="h-3 w-3 animate-spin" /> working…</div>
+                    <div className="flex gap-4"><div className="w-12 shrink-0" /><div className="flex items-center gap-2 text-[12px] text-dim"><Loader2 className="h-3 w-3 animate-spin" /> working</div></div>
                   ) : null}
-                  {lead && att && att.kind !== "input" ? <AttentionPanel tid={lead.id} att={att} /> : null}
+                  {lead && att && att.kind !== "input" ? <div className="flex gap-4"><div className="w-12 shrink-0" /><AttentionPanel tid={lead.id} att={att} className="min-w-0 flex-1" /></div> : null}
                 </div>
               </div>
             )}
-            <div className="shrink-0 border-t border-border bg-surface px-4 py-3">
-              <div className="mx-auto flex max-w-3xl items-end gap-2">
+            <div className="shrink-0 border-t border-border bg-surface px-6 py-3">
+              <div className="relative mx-auto max-w-[760px]">
                 <Textarea
                   ref={inputRef}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
-                  rows={Math.min(6, Math.max(1, text.split("\n").length))}
-                  placeholder={!project ? "create a project first" : att?.kind === "question" ? "or type your own answer…" : att?.kind === "permission" ? "deny with a message…" : lead ? "Tell the lead what to do next…" : "What should the swarm build? Describe the goal; the lead sizes and runs it."}
-                  className="min-h-[40px] resize-none py-2.5"
+                  rows={Math.min(6, Math.max(2, text.split("\n").length))}
+                  placeholder={!project ? "create a project first" : att?.kind === "question" ? "or type your own answer" : att?.kind === "permission" ? "deny with a message" : lead ? "Tell the lead what to do next" : "What should the swarm build? Describe the goal; the lead sizes and runs it."}
+                  className="min-h-[56px] resize-none bg-surface py-2.5 pr-12"
                   disabled={!project}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
                 />
-                <Button variant="accent" size="lg" onClick={send} disabled={sending || !text.trim() || !project}>
-                  {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizontal className="h-3.5 w-3.5" />} Send
+                <Button variant="primary" size="icon-sm" className="absolute bottom-2 right-2 rounded-full" onClick={send} disabled={sending || !text.trim() || !project} aria-label="send">
+                  {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
                 </Button>
               </div>
-              <div className="mx-auto mt-1 max-w-3xl text-[11px] text-dim">enter sends · shift+enter new line · it plans with the decide model and dispatches the swarm; watch it on the right</div>
+              <div className="mx-auto mt-1.5 max-w-[760px] text-meta">enter sends, shift+enter for a new line · the lead plans with the decide model and dispatches the swarm; its work shows on the right</div>
             </div>
           </div>
 
-          <aside className="hidden w-[300px] shrink-0 flex-col border-l border-border bg-surface/40 lg:flex">
-            <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-dim"><Waypoints className="h-3.5 w-3.5" /> This lead's swarm <span className="num ml-auto normal-case tracking-normal text-dim">{dispatched.length}</span></div>
+          <aside className="hidden w-[300px] shrink-0 flex-col border-l border-border bg-surface lg:flex">
+            <div className="text-label flex h-9 items-center gap-2 border-b border-border px-4">This lead's swarm <span className="num ml-auto text-dim">{dispatched.length}</span></div>
             <div className="min-h-0 flex-1 overflow-y-auto p-2">
               {dispatched.length ? dispatched.map((t) => {
                 const a = liveAttention(t);
                 return (
-                  <Link key={t.id} to={taskHref(t)} className={cn("mb-1.5 block rounded-md border border-border bg-surface p-2 hover:border-border-strong", a && "attention-glow")}>
+                  <Link key={t.id} to={taskHref(t)} className="mb-1 block rounded-md px-2 py-2 transition-colors duration-150 hover:bg-surface-2">
                     <div className="flex items-center gap-1.5">
                       <TaskKindIcon t={t} />
-                      <span className="mono text-[11px] text-muted">{short(t.id)}</span>
-                      <StateBadge state={t.state} />
-                      <span className="ml-auto text-[10.5px] font-medium" style={{ color: agentColor(taskAgent(t)) }}>{taskAgent(t) ? agentLabel(taskAgent(t)) : "unrouted"}</span>
+                      <span className="mono text-muted">{short(t.id)}</span>
+                      <StateBadge state={t.state} attention={!!a} />
+                      <span className="ml-auto flex items-center gap-1.5 text-meta"><AgentDot agent={taskAgent(t)} />{taskAgent(t) ? agentLabel(taskAgent(t)) : "unrouted"}</span>
                     </div>
-                    <div className="mt-1 line-clamp-2 text-[12px] leading-snug text-fg">{firstLine(t.spec, 120)}</div>
-                    {a ? <div className="mt-1 text-[11px] text-warn">{a.kind === "permission" ? "needs approval" : a.kind === "question" ? "asks a question" : a.kind === "directive" ? "may be breaking a standing order" : a.kind}</div> : null}
+                    <div className="mt-1 line-clamp-2 text-[12px] leading-[18px] text-fg">{firstLine(t.spec, 120)}</div>
+                    {a ? <div className="mt-0.5 text-[12px] text-accent">{a.kind === "permission" ? "needs approval" : a.kind === "question" ? "asks a question" : a.kind === "directive" ? "may be breaking a standing order" : a.kind}</div> : null}
                   </Link>
                 );
               }) : <div className="px-2 py-6 text-center text-[12px] text-dim">tasks and sessions the lead dispatches appear here</div>}
             </div>
             {project ? (
-              <div className="max-h-[42%] shrink-0 overflow-y-auto border-t border-border p-2">
+              <div className="max-h-[42%] shrink-0 overflow-y-auto border-t border-border p-3">
                 <StandingOrders project={project} title="Project standing orders" />
               </div>
             ) : null}

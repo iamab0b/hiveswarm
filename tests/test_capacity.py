@@ -66,7 +66,7 @@ def test_agents_page_stepper_changes_lanes(stack, page):
     stack.wait_for(lambda: _capacity(stack, "codex") == 2, 30, "the worker to add a lane")
     page.wait_for_timeout(2500)
     assert "applying" not in card.inner_text()
-    assert "2 / 2" not in card.inner_text() and "/ 2 busy" in card.inner_text()
+    assert "of 2 busy" in card.inner_text()
     card.locator("text=back to worker.toml").click()
     stack.wait_for(lambda: desired("codex") is None, 10, "the app to clear the override")
     stack.wait_for(lambda: _capacity(stack, "codex") == 1, 30, "the worker to retire the extra lane")

@@ -6,15 +6,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** Hue dots only (6 px next to a name, chart series); never a border, a background or a heading. */
 export const AGENT_COLORS: Record<string, string> = {
-  claude_code: "#e07b53",
-  codex: "#19b389",
-  cursor: "#b57bff",
-  prime_agent: "#38d19d",
-  local_direct: "#38d19d",
-  antigravity: "#4d8cff",
-  gemini: "#4d8cff",
-  opencode: "#e8c547",
+  claude_code: "#d9843f",
+  codex: "#3aa981",
+  cursor: "#8b7cf6",
+  prime_agent: "#5aa0a0",
+  local_direct: "#5aa0a0",
+  antigravity: "#4f8ee6",
+  gemini: "#4f8ee6",
+  opencode: "#c9a227",
 };
 
 export const AGENT_LABELS: Record<string, string> = {
@@ -29,7 +30,7 @@ export const AGENT_LABELS: Record<string, string> = {
 };
 
 export function agentColor(agent?: string | null): string {
-  return AGENT_COLORS[agent || ""] || "#9aa4b2";
+  return AGENT_COLORS[agent || ""] || "#8c8c96";
 }
 
 export function agentLabel(agent?: string | null): string {
@@ -206,14 +207,14 @@ export function classifyEntry(source: string, chunk: string): { agent: string | 
 
 export function attentionLabel(a: Attention): string {
   switch (a.kind) {
-    case "permission": return "needs approval";
-    case "question": return "asks you";
-    case "input": return "waiting for you";
-    case "usage_limit": return "usage limit";
-    case "handoff": return "handoff";
-    case "failed": return "failed";
-    case "directive": return "standing order";
-    case "stalled": return "stalled";
+    case "permission": return "Needs approval";
+    case "question": return "Asks you";
+    case "input": return "Waiting for you";
+    case "usage_limit": return "Usage limit";
+    case "handoff": return "Handoff";
+    case "failed": return "Failed";
+    case "directive": return "Standing order";
+    case "stalled": return "Stalled";
     default: return a.kind;
   }
 }

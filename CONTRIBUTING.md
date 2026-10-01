@@ -31,6 +31,8 @@ npm run build && rm -rf ../src/hiveswarm/ui_dist && cp -r dist ../src/hiveswarm/
 
 The built app is committed under `src/hiveswarm/ui_dist/` so installing the wheel needs no Node; CI checks that the committed build matches the sources. Rebuild it in the same PR as any `webapp/` change.
 
+[DESIGN.md](DESIGN.md) is the contract for how the app looks: tokens, the primitives under `webapp/src/components/ui/`, page patterns and a list of don'ts. A change that adds a colour, an icon in a title or a new kind of card is a change to that document first. `pytest -m e2e` renders every page in Chromium and fails on console errors; look at the regenerated screenshots before opening the PR.
+
 ### Trying a change for real
 
 `hm init` into a scratch home keeps your own setup untouched:

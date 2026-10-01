@@ -3,9 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Command } from "cmdk";
 import { toast, Toaster } from "sonner";
 import { AnimatePresence, motion } from "motion/react";
-import {
-  Activity, BarChart3, Bell, Bot, ChevronRight, Crown, Hexagon, Inbox, LayoutGrid, ListChecks, Moon, Plus, Search, Sun, Wifi, WifiOff,
-} from "lucide-react";
+import { Activity, Bell, ChevronRight, Hexagon, Inbox, Moon, Plus, Search, Sun, Wifi, WifiOff } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { agentColor, agentLabel, cn, firstLine, isLive, liveAttention, sessionOf, short } from "@/lib/utils";
 import { Button } from "./ui/button";
@@ -16,13 +14,13 @@ import { InboxList } from "@/pages/Inbox";
 import { taskHref } from "./bits";
 
 const NAV = [
-  { to: "/lead", label: "Lead", icon: Crown, key: "1" },
-  { to: "/", label: "Swarm", icon: LayoutGrid, key: "2" },
-  { to: "/inbox", label: "Inbox", icon: Inbox, key: "3" },
-  { to: "/hive", label: "Hive", icon: Activity, key: "4" },
-  { to: "/tasks", label: "Tasks", icon: ListChecks, key: "5" },
-  { to: "/stats", label: "Stats", icon: BarChart3, key: "6" },
-  { to: "/agents", label: "Agents", icon: Bot, key: "7" },
+  { to: "/lead", label: "Lead", key: "1" },
+  { to: "/", label: "Swarm", key: "2" },
+  { to: "/inbox", label: "Inbox", key: "3" },
+  { to: "/hive", label: "Hive", key: "4" },
+  { to: "/tasks", label: "Tasks", key: "5" },
+  { to: "/stats", label: "Stats", key: "6" },
+  { to: "/agents", label: "Agents", key: "7" },
 ];
 
 export function Shell() {
@@ -103,57 +101,57 @@ export function Shell() {
   return (
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
-          <NavLink to="/" className="flex items-center gap-2 pr-2">
-            <Hexagon className="h-5 w-5 text-accent" strokeWidth={2.2} />
-            <span className="text-[14px] font-semibold tracking-tight">Hiveswarm</span>
+        <header className="flex h-12 shrink-0 items-center gap-4 border-b border-border bg-surface px-4">
+          <NavLink to="/" className="flex items-center gap-2">
+            <Hexagon className="h-4 w-4 text-fg" strokeWidth={2} />
+            <span className="text-[13px] font-semibold tracking-tight">Hiveswarm</span>
           </NavLink>
-          <nav className="flex items-center gap-0.5">
+          <nav className="flex h-full items-center gap-0.5">
             {NAV.map((n) => (
               <NavLink
                 key={n.to}
                 to={n.to}
                 end={n.to === "/"}
                 className={({ isActive }) => cn(
-                  "flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] font-medium transition-colors",
-                  isActive ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2/70 hover:text-fg",
-                  n.to === "/lead" && !isActive && "text-accent/90",
+                  "relative flex h-full items-center gap-1.5 px-2.5 text-[13px] transition-colors duration-150",
+                  isActive ? "text-fg after:absolute after:inset-x-2.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent" : "text-muted hover:text-fg",
                 )}
               >
-                <n.icon className="h-3.5 w-3.5" />
                 {n.label}
                 {n.to === "/inbox" && inbox.length ? (
-                  <span className={cn("ml-0.5 rounded-full px-1.5 text-[10.5px] font-semibold", attention ? "bg-warn text-accent-fg" : "bg-surface-3 text-muted")}>{inbox.length}</span>
+                  <span className={cn("num rounded-full px-1.5 text-[11px] leading-4", attention ? "bg-accent text-accent-fg font-semibold" : "bg-surface-3 text-muted")}>{inbox.length}</span>
                 ) : null}
               </NavLink>
             ))}
           </nav>
           <div className="flex-1" />
           <div className="hidden items-center gap-3 text-[12px] text-muted md:flex">
-            <span className="flex items-center gap-1.5"><span className={cn("h-1.5 w-1.5 rounded-full", running ? "bg-info live-dot" : "bg-dim")} /><b className="num text-fg">{running}</b> running</span>
-            <span className="flex items-center gap-1.5"><b className="num text-fg">{queued}</b> queued</span>
-            <span className="flex items-center gap-1.5"><b className="num text-success">{t.done || 0}</b> done</span>
-            <span className="flex items-center gap-1.5"><b className="num text-danger">{t.failed || 0}</b> failed</span>
+            <span className="flex items-center gap-1.5"><span className={cn("h-1.5 w-1.5 rounded-full", running ? "bg-fg live-dot" : "bg-dim")} /><span className="num text-fg">{running}</span> running</span>
+            <span><span className="num text-fg">{queued}</span> queued</span>
+            <span><span className="num text-fg">{t.done || 0}</span> done</span>
+            {t.failed ? <span><span className="num text-danger">{t.failed}</span> failed</span> : null}
           </div>
-          <Tip label="Keys"><Button variant="ghost" size="icon-sm" onClick={() => setHelp(true)} className="text-muted">?</Button></Tip>
-          <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)} className="text-muted">
-            <Search className="h-3.5 w-3.5" /> <span className="hidden lg:inline">Search</span> <kbd className="key">⌘K</kbd>
-          </Button>
-          <Tip label={theme === "dark" ? "Light theme" : "Dark theme"}>
-            <Button variant="ghost" size="icon-sm" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-              {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)} className="text-muted">
+              <Search className="h-3.5 w-3.5" /> <span className="hidden lg:inline">Search</span> <kbd className="key">⌘K</kbd>
             </Button>
-          </Tip>
-          <Tip label={connected ? `connected · ${summary?.dispatcher_alive ? "dispatcher alive" : "dispatcher down"}` : error || "reconnecting…"}>
-            <span className={cn("flex h-7 w-7 items-center justify-center rounded-md", connected ? "text-success" : "text-danger")}>
-              {connected ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
-            </span>
-          </Tip>
-          <Button variant="ghost" size="icon-sm" onClick={() => setDrawer((v) => !v)} className={cn(attention && "text-warn")}>
-            <Bell className="h-3.5 w-3.5" />
-          </Button>
+            <Tip label="Keys"><Button variant="ghost" size="icon-sm" onClick={() => setHelp(true)} className="text-muted">?</Button></Tip>
+            <Tip label={theme === "dark" ? "Light theme" : "Dark theme"}>
+              <Button variant="ghost" size="icon-sm" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="text-muted">
+                {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+              </Button>
+            </Tip>
+            <Tip label={connected ? `connected · ${summary?.dispatcher_alive ? "dispatcher alive" : "dispatcher down"}` : error || "reconnecting…"}>
+              <span className={cn("flex h-7 w-7 items-center justify-center rounded-md", connected ? "text-muted" : "text-danger")}>
+                {connected ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
+              </span>
+            </Tip>
+            <Button variant="ghost" size="icon-sm" onClick={() => setDrawer((v) => !v)} className={cn("text-muted", attention && "text-accent")}>
+              <Bell className="h-3.5 w-3.5" />
+            </Button>
+          </div>
           <Button variant="accent" size="sm" onClick={() => setGoalOpen(true)}>
-            <Plus className="h-3.5 w-3.5" /> New goal <kbd className="key bg-accent-fg/10 border-accent-fg/20 text-accent-fg">g</kbd>
+            <Plus className="h-3.5 w-3.5" /> New goal <kbd className="key border-accent-fg/20 bg-accent-fg/10 text-accent-fg">g</kbd>
           </Button>
         </header>
         <div className="relative flex min-h-0 flex-1">
@@ -166,14 +164,14 @@ export function Shell() {
                 initial={{ x: 24, opacity: 0 }}
                 animate={{ x: 0, opacity: 1 }}
                 exit={{ x: 24, opacity: 0 }}
-                transition={{ type: "spring", stiffness: 420, damping: 36 }}
-                className="absolute right-0 top-0 z-30 flex h-full w-[420px] max-w-[92vw] flex-col border-l border-border-strong bg-surface shadow-[var(--shadow-pop)]"
+                transition={{ duration: 0.15, ease: "easeOut" }}
+                className="absolute right-0 top-0 z-30 flex h-full w-[440px] max-w-[92vw] flex-col border-l border-border bg-surface shadow-[var(--shadow-pop)]"
               >
-                <div className="flex h-11 items-center justify-between border-b border-border px-3">
-                  <div className="text-[13px] font-semibold">Inbox <span className="text-muted">· {inbox.length}</span></div>
+                <div className="flex h-11 items-center justify-between border-b border-border px-4">
+                  <div className="text-[13px] font-semibold">Inbox <span className="num font-normal text-dim">{inbox.length}</span></div>
                   <Button variant="ghost" size="sm" onClick={() => setDrawer(false)}>close <kbd className="key">i</kbd></Button>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                <div className="min-h-0 flex-1 overflow-y-auto p-3">
                   <InboxList compact onNavigate={() => setDrawer(false)} />
                 </div>
               </motion.aside>
@@ -187,7 +185,7 @@ export function Shell() {
           theme={theme}
           position="bottom-right"
           closeButton
-          toastOptions={{ className: "!bg-surface !text-fg !border-border-strong !shadow-[var(--shadow-pop)] !text-[12.5px]" }}
+          toastOptions={{ className: "!bg-surface !text-fg !border-border-strong !shadow-[var(--shadow-pop)] !text-[12.5px] !rounded-lg" }}
         />
       </div>
     </TooltipProvider>
@@ -201,14 +199,14 @@ function Palette({ open, onOpenChange, onGoal }: { open: boolean; onOpenChange: 
   const live = useMemo(() => tasks.filter(isLive), [tasks]);
   const go = (fn: () => void) => { onOpenChange(false); setQ(""); fn(); };
   return (
-    <Command.Dialog open={open} onOpenChange={onOpenChange} label="Command palette" className="fixed left-1/2 top-[14vh] z-[80] w-[92vw] max-w-xl -translate-x-1/2 overflow-hidden rounded-xl border border-border-strong bg-surface shadow-[var(--shadow-pop)]" overlayClassName="fixed inset-0 z-[79] bg-black/50 backdrop-blur-[2px]">
+    <Command.Dialog open={open} onOpenChange={onOpenChange} label="Command palette" className="fixed left-1/2 top-[14vh] z-[80] w-[92vw] max-w-xl -translate-x-1/2 overflow-hidden rounded-xl border border-border-strong bg-surface shadow-[var(--shadow-pop)]" overlayClassName="fixed inset-0 z-[79] bg-black/50">
       <div className="flex items-center gap-2 border-b border-border px-3">
         <Search className="h-4 w-4 text-dim" />
-        <Command.Input value={q} onValueChange={setQ} placeholder="Jump to a task, session, or action…" className="h-11 w-full bg-transparent text-[13.5px] outline-none placeholder:text-dim" />
+        <Command.Input value={q} onValueChange={setQ} placeholder="Jump to a task, a session or an action" className="h-11 w-full bg-transparent text-[13px] outline-none placeholder:text-dim" />
         <kbd className="key">esc</kbd>
       </div>
-      <Command.List className="max-h-[50vh] overflow-y-auto p-1.5 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-dim">
-        <Command.Empty className="p-4 text-center text-[12.5px] text-dim">nothing matches</Command.Empty>
+      <Command.List className="max-h-[50vh] overflow-y-auto p-1.5 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-dim">
+        <Command.Empty className="p-4 text-center text-[12px] text-dim">Nothing matches</Command.Empty>
         <Command.Group heading="Actions">
           <Item onSelect={() => go(onGoal)} icon={<Plus className="h-3.5 w-3.5" />} label="New goal" kbd="g" />
           <Item onSelect={() => go(() => nav("/inbox"))} icon={<Inbox className="h-3.5 w-3.5" />} label="Open inbox" kbd="2" />
@@ -221,7 +219,7 @@ function Palette({ open, onOpenChange, onGoal }: { open: boolean; onOpenChange: 
               return (
                 <Item key={t.id} value={`${t.id} ${t.spec} ${t.project}`} onSelect={() => go(() => nav(taskHref(t)))}
                   icon={<span className="h-2 w-2 rounded-full" style={{ background: agentColor(t.claimed_by || sessionOf(t).agent) }} />}
-                  label={<span className="flex min-w-0 items-center gap-2"><span className="mono text-[11.5px] text-muted">{short(t.id)}</span><span className="truncate">{firstLine(t.spec, 70)}</span>{a ? <Badge tone="warn">{a.kind}</Badge> : null}</span>}
+                  label={<span className="flex min-w-0 items-center gap-2"><span className="mono text-muted">{short(t.id)}</span><span className="truncate">{firstLine(t.spec, 70)}</span>{a ? <Badge tone="accent">needs you</Badge> : null}</span>}
                   right={agentLabel(t.claimed_by || sessionOf(t).agent)} />
               );
             })}
@@ -231,7 +229,7 @@ function Palette({ open, onOpenChange, onGoal }: { open: boolean; onOpenChange: 
           {tasks.slice(0, 200).map((t) => (
             <Item key={t.id} value={`${t.id} ${t.spec} ${t.project} ${t.state}`} onSelect={() => go(() => nav(taskHref(t)))}
               icon={<ChevronRight className="h-3.5 w-3.5 text-dim" />}
-              label={<span className="flex min-w-0 items-center gap-2"><span className="mono text-[11.5px] text-muted">{short(t.id)}</span><span className="truncate">{firstLine(t.spec, 70)}</span></span>}
+              label={<span className="flex min-w-0 items-center gap-2"><span className="mono text-muted">{short(t.id)}</span><span className="truncate">{firstLine(t.spec, 70)}</span></span>}
               right={t.state} />
           ))}
         </Command.Group>
@@ -242,10 +240,10 @@ function Palette({ open, onOpenChange, onGoal }: { open: boolean; onOpenChange: 
 
 function Item({ onSelect, icon, label, right, kbd, value }: { onSelect: () => void; icon?: React.ReactNode; label: React.ReactNode; right?: React.ReactNode; kbd?: string; value?: string }) {
   return (
-    <Command.Item value={value} onSelect={onSelect} className="flex cursor-default items-center gap-2.5 rounded-md px-2 py-2 text-[13px] text-fg data-[selected=true]:bg-surface-2">
+    <Command.Item value={value} onSelect={onSelect} className="flex cursor-default items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-fg data-[selected=true]:bg-surface-2">
       <span className="flex w-4 justify-center text-muted">{icon}</span>
       <span className="min-w-0 flex-1">{label}</span>
-      {right ? <span className="text-[11.5px] text-dim">{right}</span> : null}
+      {right ? <span className="text-meta">{right}</span> : null}
       {kbd ? <kbd className="key">{kbd}</kbd> : null}
     </Command.Item>
   );

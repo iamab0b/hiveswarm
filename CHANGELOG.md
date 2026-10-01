@@ -4,6 +4,9 @@ All notable changes to Hiveswarm. The format follows [Keep a Changelog](https://
 
 ## [Unreleased]
 
+### Changed
+- The web app has a design system ([DESIGN.md](DESIGN.md)) and was reworked to it: one accent colour for *needs you* and the primary action, green and red only for finished and failed, agents as neutral chips with a hue dot, no glows or coloured borders, a hairline grid, one type scale. The Lead chat reads as a document (speaker labels, GitHub-flavoured markdown, tool calls collapsed to one line), the Stats page has pass-rate and wall-time charts, and the composer has its send button inline. `docs/screenshots/before/` keeps four pages from before the rework.
+
 ### Added
 - Live lane counts: the Agents page (+/− on each card) and `hm agents --set <agent> <n|auto>` change how many parallel lanes an agent runs while the worker runs — new lanes start claiming at once, surplus lanes exit after their current task; `0` pauses an agent; the setting survives worker restarts. `POST /agents/{id}/capacity`, `desired_capacity` and `provider` on `GET /agents`.
 
