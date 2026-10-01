@@ -20,8 +20,10 @@ You already pay for several coding agents. Hiveswarm makes them one team:
 
 - **Tasks go to the agent that is best at them right now.** Every task is classified (type, difficulty, needs tools?), routed by measured pass rate and step time per agent and task type, verified against an acceptance command you set, and retried on another agent with a handoff note when it fails. Slow or failing agents go on probation for that kind of work and earn their way back.
 - **Every agent runs where you can see it.** Headless tasks stream their tool calls, thinking and diffs into the app. Interactive sessions run in real terminals (tmux) in the browser; permission requests, questions and "waiting for you" moments land in one inbox with keyboard shortcuts to approve, deny, answer or type.
-- **A lead agent can run the whole thing.** `hm lead <project>` starts a persistent Claude Code session with the `hiveswarm` MCP server and four skills (plan, route, review, triage). Tell it what the project needs; it plans, sizes the swarm, dispatches, watches, reviews and merges, and asks you only when it has to.
+- **A lead agent can run the whole thing.** `hm lead <project>` starts a persistent Claude Code session with the `hiveswarm` MCP server and five skills (plan, route, review, triage, craft). Tell it what the project needs; it plans, sizes the swarm, dispatches, watches, reviews and merges, and asks you only when it has to.
 - **Standing orders keep agents honest.** A rule you set — "never copy from repos we can't license", "run the tests before every commit" — sits at the top of every prompt, is re-injected on a cadence (through hooks for Claude Code, typed in for the others), and is audited: a likely violation is flagged in the inbox and to the lead.
+- **Every agent works to one standard.** The Craft ruleset (understand first, a production-code ladder adapted from Ponytail, tests required but not excess, a Changed / Tested / Deferred handoff) goes into every prompt and session. Hiveswarm reads the handoff back: deferred shortcuts land in a ledger, and code that changed with no test touched or run is flagged `untested` and cannot merge until someone looks.
+- **Talk about the plan without stopping the swarm.** The advisor sits beside the lead with read-only tools, the plan on file and memory of what the swarm learned; when you change course it pauses the project, briefs the lead, and the lead resumes once it has adjusted. Profiles give one CLI several models and effort levels, changed live from the Agents page.
 - **Your machines, your keys.** Hiveswarm runs on one laptop, or a hub that holds the repos plus any number of workers that run the agent CLIs. Classification uses any OpenAI-compatible endpoint, a model you run yourself, or a built-in mock. Nothing leaves your machines except what the agents and the classifier you chose send.
 
 ## Install
@@ -44,7 +46,7 @@ The app keeps the swarm running while its window is open (or in the tray), stops
 ### The engine only (hubs, servers, the CLI)
 
 ```bash
-pip install --user ./hiveswarm-0.1.1-py3-none-any.whl
+pip install --user ./hiveswarm-0.2.0-py3-none-any.whl
 hm init --project myapp --repo ~/code/myapp
 hm up
 ```
@@ -94,7 +96,7 @@ Light theme, keyboard-first (press <kbd>?</kbd>), installable as a PWA.
 - **daemon** — the source of truth: tasks, attempts, sessions, directives, agent stats. Dispatches to workers, runs the verifier (Docker when available, otherwise the acceptance command in the worktree), merges branches.
 - **decide** — a small service in front of the classifier: caches answers, has a fallback, exposes `/decide` for classification, swarm sizing, the risk gate for session commands and standing-order audits. Backends: `openai`, `local`, `jev`, `mock`.
 - **worker** — polls the daemon, runs agents in worktrees of a mirror of the hub's repo, ships logs, hosts interactive sessions in tmux and answers Claude Code hooks. One worker per machine that has agent CLIs; the hub can be the same machine.
-- **hm** — the CLI. `hm ui` serves the web app (bundled, no Node needed). `hiveswarm-mcp` is the MCP server the lead (or your own Claude Code, Cursor, Codex…) talks to: 32 tools from `hm_add_tasks` to `hm_directive`.
+- **hm** — the CLI. `hm ui` serves the web app (bundled, no Node needed). `hiveswarm-mcp` is the MCP server the lead (or your own Claude Code, Cursor, Codex…) talks to: 43 tools from `hm_add_tasks` to `hm_recall`.
 
 The full picture is in [docs/architecture.md](docs/architecture.md).
 
@@ -104,7 +106,7 @@ A hub that holds repositories and runs the daemon, plus a laptop that runs the a
 
 ```bash
 # hub: the wheel from the release
-pip install --user ./hiveswarm-0.1.1-py3-none-any.whl && hm init --project myapp --repo ~/repos/myapp
+pip install --user ./hiveswarm-0.2.0-py3-none-any.whl && hm init --project myapp --repo ~/repos/myapp
 # in ~/.hiveswarm/config.toml: [daemon] host = "0.0.0.0", hub_ssh = "you@hub"
 hiveswarm-decide & hiveswarm-daemon
 

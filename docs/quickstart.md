@@ -21,7 +21,7 @@ Everything on one laptop or desktop: the daemon, the classifier, one worker and 
 Download the wheel from the [Releases page](https://github.com/iamab0b/hiveswarm/releases), then:
 
 ```bash
-pip install --user ./hiveswarm-0.1.1-py3-none-any.whl
+pip install --user ./hiveswarm-0.2.0-py3-none-any.whl
 ```
 
 `pipx install ./hiveswarm-*.whl` or `uv tool install ./hiveswarm-*.whl` work the same way. The web app is bundled in the wheel; no Node needed. From a checkout: `pip install -e '.[dev]'`.
@@ -87,6 +87,8 @@ hm lead myapp "Ship user avatars: upload, resize, serve. Tests for each piece."
 ```
 
 In the app, <kbd>g</kbd> opens the same three choices. <kbd>?</kbd> lists the keys.
+
+Every agent works under the Craft ruleset ([craft.md](craft.md)): it ends with a Changed / Tested / Deferred handoff, deferred shortcuts collect in a ledger on the Lead page, and a change with no test behind it waits in the inbox as *untested* until you look. The *Advisor* switch on the Lead page is where you discuss the plan while the lead works ([advisor.md](advisor.md)); the Agents page is where you add profiles (one CLI, several models and effort levels) and change lane counts live ([profiles.md](profiles.md)).
 
 ## 7. Where things are
 

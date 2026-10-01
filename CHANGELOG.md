@@ -4,6 +4,10 @@ All notable changes to Hiveswarm. The format follows [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-01
+
+The app got a design system, every agent got a way of working, and the swarm got an advisor, profiles and memory. Upgrading: install the 0.2.0 wheel on the hub and let the desktop app upgrade the laptop; the database migrates itself (new columns and tables), existing `worker.toml` and `config.toml` need no change. The Craft ruleset is on by default (`[rulesets] default = "off"` turns it off); memory stays off until `[memory] backend` is set.
+
 ### Changed
 - The web app has a design system ([DESIGN.md](DESIGN.md)) and was reworked to it: one accent colour for *needs you* and the primary action, green and red only for finished and failed, agents as neutral chips with a hue dot, no glows or coloured borders, a hairline grid, one type scale. The Lead chat reads as a document (speaker labels, GitHub-flavoured markdown, tool calls collapsed to one line), the Stats page has pass-rate and wall-time charts, and the composer has its send button inline. `docs/screenshots/before/` keeps four pages from before the rework.
 

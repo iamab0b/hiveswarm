@@ -26,4 +26,4 @@ def _load_env_file() -> None:
 
 _load_env_file()
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"

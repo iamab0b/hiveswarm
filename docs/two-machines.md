@@ -7,7 +7,7 @@ Everything below also applies to one worker on the hub itself plus extra workers
 ## Hub
 
 ```bash
-pip install --user ./hiveswarm-0.1.1-py3-none-any.whl
+pip install --user ./hiveswarm-0.2.0-py3-none-any.whl
 hm init --project myapp --repo ~/repos/myapp
 ```
 

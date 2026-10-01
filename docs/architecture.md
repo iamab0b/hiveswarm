@@ -53,13 +53,20 @@ The session host (`workers/session_host.py`) runs interactive sessions in a dedi
 
 ### hm, the app, the MCP server
 
-`hm` (`cli.py`) is a thin HTTP client over the daemon, plus `init`/`up`/`login`/`ui`. `hm ui` (`ui_server.py`) serves the built React app from `ui_dist/`, proxies `/api` to the daemon, exposes `/api/events` (SSE) and the terminal websocket. `hiveswarm-mcp` (`mcp_server.py`) exposes 32 `hm_*` tools over stdio for the lead or any MCP client; `lead.py` and `lead_skills.py` hold the lead's prompt and skills.
+`hm` (`cli.py`) is a thin HTTP client over the daemon, plus `init`/`up`/`login`/`ui`. `hm ui` (`ui_server.py`) serves the built React app from `ui_dist/` (its look is specified in [DESIGN.md](../DESIGN.md)), proxies `/api` to the daemon, exposes `/api/events` (SSE), the terminal websocket and, on a worker machine, the profile editor for `worker.toml` (`/api/local/profiles`, written through `tomledit.py`). `hiveswarm-mcp` (`mcp_server.py`) exposes 43 `hm_*` tools over stdio for the lead or any MCP client, 22 of them in the advisor role (`HIVESWARM_ROLE=advisor`: read-only views plus the plan, pause/resume, briefs and memory); `lead.py` and `lead_skills.py` hold the lead's prompt and skills.
+
+### Craft, the advisor, memory
+
+- `rulesets.py`: the Craft ruleset text, resolved per project at claim time and put into every prompt (and installed as a `hiveswarm-craft` skill for Claude Code lanes); the handoff parser; the rules for the `untested` flag. The dispatcher reads the handoff back when an attempt finishes: Deferred lines go to the `deferred` table, an untested attempt gets a task flag that merge refuses until acknowledged ([craft.md](craft.md)).
+- `advisor.py`: the plan (`plans`), pauses (`pauses`), briefs (`briefs`) and the advisor's conversation (`advisor_messages`, `advisor_turns`, `advisors`). A turn is run by a worker's session host as headless Claude Code resuming the project's advisor session; the dispatcher skips paused projects ([advisor.md](advisor.md)).
+- `memory.py`: the `none` / `local` (FTS5 `memories`) / `hindsight` backends; the dispatcher stores a lesson per finished attempt, prompts recall what matches ([memory.md](memory.md)).
+- Profiles are plain `[agents.*]` tables; the worker's `LaneManager` re-reads `worker.toml` on change and the daemon keeps each agent's `provider`, `model` and `effort` ([profiles.md](profiles.md)).
 
 ## Data model
 
-SQLite tables (`schema.sql`, migrated in place by `db.py`): `tasks` (with `kind`, `session` JSON, `preferred_agent`, `flags`), `classifications`, `attempts` (outcome, tokens, cost, and the step metrics `steps, step_avg_s, step_p90_s, step_max_s, slow_steps, silence_max_s, first_action_s, think_avg_s`), `agent_stats`, `quota_windows`, `task_logs` (the event stream every view is built from), `agents`, `decision_cache`, `session_commands`, `directives`, `project_local`, `project_tombstones`.
+SQLite tables (`schema.sql`, migrated in place by `db.py`): `tasks` (with `kind`, `session` JSON, `preferred_agent`, `flags`), `classifications`, `attempts` (outcome, tokens, cost, the step metrics `steps, step_avg_s, step_p90_s, step_max_s, slow_steps, silence_max_s, first_action_s, think_avg_s`, and `ruleset`, `lines_changed`, `untested`, `handoff`), `agent_stats`, `quota_windows`, `task_logs` (the event stream every view is built from), `agents` (with `capacity`, `desired_capacity`, `provider`, `model`, `effort`), `decision_cache`, `session_commands`, `directives`, `project_local`, `project_tombstones`, `deferred`, `plans`, `pauses`, `briefs`, `advisor_messages`, `advisor_turns`, `advisors`, and `memories` (+ its FTS index) when the local memory backend is on.
 
-Task states: `pending → classified → assigned → claimed → running → verifying → done | failed | abandoned`. Sessions add `turn` (`working`, `idle`) and `attention` (`permission`, `question`, `input`, `usage_limit`, `handoff`, `failed`, `directive`, `stalled`) inside `tasks.session`.
+Task states: `pending → classified → assigned → claimed → running → verifying → done | failed | abandoned`. Sessions add `turn` (`working`, `idle`) and `attention` (`permission`, `question`, `input`, `usage_limit`, `handoff`, `failed`, `directive`, `stalled`) inside `tasks.session`; `untested` is a task flag that outlives a done task until it is merged with an acknowledgement or cleared.
 
 ## Trust boundaries
 
