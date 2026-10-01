@@ -26,6 +26,8 @@ FAKE_AGENT = textwrap.dedent('''\
     doc = chr(34) * 3
     if "def add(a, b):" in src and doc not in src:
         src = src.replace("def add(a, b):", "def add(a, b):\\n    " + doc + "Return a + b (written by example-agent)." + doc)
+    else:
+        src += "\\n# example-agent was here\\n"
     with open("add.py", "w") as f:
         f.write(src)
     print("< edited add.py")
@@ -90,7 +92,7 @@ def test_task_runs_on_a_plugin_agent(stack, plugin_site, tmp_path):
         stack.wait_for(lambda: stack.state(tid) in ("done", "failed"), 120, "the plugin task to finish")
         d = stack.task(tid)
         assert d["task"]["state"] == "done", stack.log_text(tid)[-2000:]
-        assert d["attempts"][-1]["agent"] == "example"
+        assert d["attempts"][-1]["agent"] == "example", stack.log_text(tid)[-3000:]
         assert d["attempts"][-1]["steps"] and d["attempts"][-1]["steps"] >= 2
         assert "Edit add.py" in stack.log_text(tid)
         p.terminate()

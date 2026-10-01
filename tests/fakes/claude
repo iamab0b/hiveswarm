@@ -9,7 +9,7 @@ import json, os, sys, time, uuid, subprocess, re, select
 
 args = sys.argv[1:]
 opts = {"name": None, "permission-mode": "default", "settings": "{}", "model": None, "resume": None, "mcp-config": None,
-        "output-format": None, "effort": None}
+        "output-format": None, "effort": None, "append-system-prompt": None, "allowedTools": None, "disallowedTools": None}
 prompt = ""
 headless = False
 i = 0
@@ -157,6 +157,64 @@ def edit_file(what):
     open("add.py", "w").write(src)
 
 
+if headless and opts["mcp-config"] and "HIVESWARM_ROLE" in opts["mcp-config"]:
+    # ── the advisor: a headless turn with the hiveswarm MCP server in its advisor role ──
+    import asyncio
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    cfg = json.loads(opts["mcp-config"])["mcpServers"]["hiveswarm"]
+    sid = opts["resume"] or str(uuid.uuid4())
+
+    def jout(obj):
+        print(json.dumps(obj), flush=True)
+
+    def say_text(text):
+        jout({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
+
+    def call(name, args):
+        jout({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": f"mcp__hiveswarm__{name}", "input": args}]}})
+
+    async def advise():
+        params = StdioServerParameters(command=cfg["command"], args=cfg.get("args", []), env={**os.environ, **cfg.get("env", {})})
+        async with stdio_client(params) as (r, w):
+            async with ClientSession(r, w) as s:
+                await s.initialize()
+                names = {t.name for t in (await s.list_tools()).tools}
+                assert "hm_add_tasks" not in names and "hm_pause" in names, names
+
+                def text(res):
+                    return "\n".join(c.text for c in res.content if getattr(c, "text", None))
+
+                jout({"type": "system", "subtype": "init", "model": opts["model"] or "claude-sonnet-5", "session_id": sid,
+                      "resumed": bool(opts["resume"]), "system_prompt_chars": len(opts["append-system-prompt"] or "")})
+                m = re.search(r"\bproject[`\s]+([A-Za-z0-9_-]+)", opts["append-system-prompt"] or "")
+                project = m.group(1) if m else "demo"
+                low = prompt.lower()
+                call("hm_status", {})
+                st = text(await s.call_tool("hm_status", {}))
+                jout({"type": "user", "message": {"content": [{"type": "tool_result", "content": st[:200]}]}})
+                if low.startswith("plan:"):
+                    call("hm_plan", {"project": project, "text": prompt[5:].strip()})
+                    text(await s.call_tool("hm_plan", {"project": project, "text": prompt[5:].strip()}))
+                    say_text(f"1. Plan saved ({'resumed' if opts['resume'] else 'fresh'} session).\n\nState: swarm running; nothing waits on you.\n\nNext: say \"pause\" if the lead should change course.")
+                elif "pause" in low or "change course" in low:
+                    call("hm_pause", {"project": project, "reason": prompt[:80]})
+                    text(await s.call_tool("hm_pause", {"project": project, "reason": prompt[:80]}))
+                    brief = ("What happened: the human changed the plan.\nWhat is in flight: see hm_list.\nWaiting on: nothing.\n"
+                             f"The human's update: {prompt.strip()}\nHow to proceed: adjust the plan, then hm_resume.")
+                    call("hm_brief", {"project": project, "text": brief})
+                    text(await s.call_tool("hm_brief", {"project": project, "text": brief}))
+                    say_text("1. Paused the project; no new task starts.\n2. Briefed the lead; it resumes once it has read it.\n\nState: paused, agents in flight finish their work.\n\nNext: watch the Lead pane for its reply.")
+                else:
+                    call("hm_plan_get", {"project": project})
+                    plan = json.loads(text(await s.call_tool("hm_plan_get", {"project": project})))
+                    have = "yes" if plan.get("plan") else "no plan saved yet"
+                    say_text(f"1. Plan on file: {have}.\n2. {'Resumed' if opts['resume'] else 'Fresh'} session; you said: {prompt.strip()[:60]}\n\nState: swarm running.\n\nNext: tell me what to change, or say \"plan: ...\" to save one.")
+    asyncio.run(advise())
+    print(json.dumps({"type": "result", "subtype": "success", "num_turns": 2, "duration_ms": 800, "total_cost_usd": 0.002,
+                      "usage": {"input_tokens": 300, "output_tokens": 80}, "result": "ok", "session_id": sid}), flush=True)
+    sys.exit(0)
+
 if headless:
     def jout(obj):
         print(json.dumps(obj), flush=True); time.sleep(step / 2)
@@ -232,6 +290,7 @@ if opts["mcp-config"]:
                     adv = json.loads(text(await s.call_tool("hm_advise", {"project": "demo", "tasks": planned})))
                     tool_result(json.dumps(adv)[:300])
                     picks = [(t["agent"] or "claude_code", t["mode"]) for t in adv["tasks"]]
+                    await s.call_tool("hm_plan", {"project": "demo", "text": "## Plan\n1. " + "\n1. ".join(p["spec"] for p in planned) + "\n\nDecisions: none yet."})
                     shape = ", ".join(f"{p[1]} on {p[0]}" for p in picks)
                     assistant(f"**Swarm plan**: {len(planned)} tasks\n- " + "\n- ".join(f"{p[1]} on `{p[0]}`" for p in picks) + f"\n\n{adv['summary']}")
                     q = ask("Ship it as one wave, or wait for your review after the first task?", ["One wave, go", "Pause after task 1"], header="Plan")

@@ -5,7 +5,7 @@ import threading
 import traceback
 from typing import Any
 
-from .. import db, perf, rulesets, sessions, worktree
+from .. import advisor, db, perf, rulesets, sessions, worktree
 from ..classify import classify_task, diff_band
 from ..config import load, load_current
 from ..router import roundrobin as router
@@ -249,7 +249,10 @@ def loop(stop: threading.Event) -> None:
             _classify_pending()
             _watch_stalls()
             routed = False
+            paused = advisor.paused_projects()
             for task in db.task_classified_queue():
+                if task["project"] in paused:
+                    continue
                 if _route_and_dispatch(task):
                     routed = True
                     break

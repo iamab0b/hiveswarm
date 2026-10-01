@@ -5,7 +5,7 @@ import subprocess
 
 
 def test_task_passes_and_records_step_metrics(stack):
-    r = stack.post("/tasks", {"project": "demo", "spec": "Add a docstring to add()",
+    r = stack.post("/tasks", {"project": "demo", "spec": "Add a docstring to add()", "agent": "claude_code",
                               "acceptance": "python3 -c 'from add import add; assert add(1, 2) == 3'", "origin": "test"})
     tid = r["id"]
     stack.wait_for(lambda: stack.state(tid) == "done", 90, "task to finish")

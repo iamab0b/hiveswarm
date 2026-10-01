@@ -1,4 +1,4 @@
-import type { Agent, AgentTable, DeferredItem, Directive, FeedEntry, LiveStep, InboxItem, LocalInfo, LogEntry, ProfilesInfo, Project, ProjectSettings, RulesetRow, SessionInfo, StatRow, Summary, Task, TaskDetail } from "./types";
+import type { AdvisorState, Agent, AgentTable, DeferredItem, Directive, FeedEntry, LiveStep, InboxItem, LocalInfo, LogEntry, Plan, ProfilesInfo, Project, ProjectSettings, RulesetRow, SessionInfo, StatRow, Summary, Task, TaskDetail } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -71,6 +71,13 @@ export const api = {
   setProfile: (p: { name: string; adapter?: string; model?: string | null; effort?: string | null; concurrency?: number; enabled?: boolean }) =>
     req<{ ok: boolean; reason?: string; note?: string }>("POST", "/local/profiles", p),
   deleteProfile: (name: string) => req<{ ok: boolean; reason?: string }>("DELETE", `/local/profiles/${name}`),
+  advisor: (project: string) => req<AdvisorState>("GET", `/advisor/${project}`),
+  advisorTalk: (project: string, text: string) => req<{ ok: boolean; turn: string }>("POST", `/advisor/${project}/talk`, { text }),
+  advisorForget: (project: string) => req<{ ok: boolean }>("DELETE", `/advisor/${project}`),
+  projectPlan: (project: string) => req<{ project: string; plan: Plan | null }>("GET", `/projects/${project}/plan`),
+  setPlan: (project: string, text: string) => req<{ project: string; plan: Plan }>("PUT", `/projects/${project}/plan`, { text, by: "you" }),
+  pause: (project: string, reason: string) => req<{ ok: boolean }>("POST", `/projects/${project}/pause`, { by: "you", reason }),
+  resume: (project: string) => req<{ ok: boolean; was_paused: boolean }>("POST", `/projects/${project}/resume`),
   projectSettings: (name: string) => req<ProjectSettings>("GET", `/projects/${name}/settings`),
   setProjectSettings: (name: string, body: { agents?: string[]; ruleset?: string; ruleset_intensity?: string }) =>
     req<ProjectSettings>("POST", `/projects/${name}/settings`, body),

@@ -177,6 +177,11 @@ timeout = 300
         r.raise_for_status()
         return r.json()
 
+    def put(self, path: str, body: dict[str, Any] | None = None, **params: Any) -> Any:
+        r = self.http.put(path, json=body or {}, params=params)
+        r.raise_for_status()
+        return r.json()
+
     def delete(self, path: str, **params: Any) -> Any:
         r = self.http.delete(path, params=params)
         r.raise_for_status()

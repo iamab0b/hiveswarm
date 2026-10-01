@@ -346,9 +346,9 @@ export function AgentsPage() {
                 {working.length ? (
                   <div className="mt-3 grid gap-1">
                     {working.map((t) => (
-                      <Link key={t.id} to={taskHref(t)} className="flex items-center gap-2 rounded-md bg-surface-2 px-2 py-1 text-[12px] hover:bg-surface-3">
-                        <TaskKindIcon t={t} /><span className="mono text-muted">{short(t.id)}</span><span className="truncate">{firstLine(t.spec, 60)}</span>
-                        {sessionOf(t).attention ? <span className="ml-auto text-accent">needs you</span> : null}
+                      <Link key={t.id} to={taskHref(t)} className="flex min-w-0 items-center gap-2 rounded-md bg-surface-2 px-2 py-1 text-[12px] hover:bg-surface-3">
+                        <TaskKindIcon t={t} /><span className="mono shrink-0 text-muted">{short(t.id)}</span><span className="min-w-0 flex-1 truncate">{firstLine(t.spec, 60)}</span>
+                        {sessionOf(t).attention ? <span className="shrink-0 whitespace-nowrap text-accent">needs you</span> : null}
                       </Link>
                     ))}
                   </div>

@@ -34,10 +34,11 @@ For Claude Code: `claude mcp add hiveswarm -- hiveswarm-mcp`. `HIVESWARM_ORIGIN`
 | projects | `hm_new_project`, `hm_delete_project` |
 | tasks | `hm_advise`, `hm_add_tasks`, `hm_wait`, `hm_diff`, `hm_merge` (`acknowledge_untested` for a flagged task), `hm_retry`, `hm_cancel`, `hm_delete` |
 | craft | `hm_deferred`, `hm_deferred_resolve` — the deferred ledger agents fill from their handoffs ([craft.md](craft.md)) |
+| plan and advisor | `hm_plan`, `hm_plan_get`, `hm_pause`, `hm_resume`, `hm_brief`, `hm_briefs` — the plan on file, pausing a project, briefs between the advisor and the lead ([advisor.md](advisor.md)); `HIVESWARM_ROLE=advisor` limits the server to the read-only tools plus these |
 | sessions | `hm_new_session`, `hm_sessions`, `hm_inbox`, `hm_send`, `hm_approve`, `hm_deny`, `hm_answer`, `hm_finish`, `hm_continue` |
 | standing orders | `hm_directive`, `hm_directives`, `hm_directive_clear`, `hm_clear_flag` |
 
-Every tool's docstring is its documentation; `hm_wait` is the one to read first — it blocks until a task finishes or something needs a human, and reports `directive` and `stalled` flags once each.
+Every tool's docstring is its documentation; `hm_wait` is the one to read first — it blocks until a task finishes or something needs a human, reports `directive` and `stalled` flags once each, and returns early with `briefs` when the advisor has paused the project for a change of course.
 
 ## Standing orders
 

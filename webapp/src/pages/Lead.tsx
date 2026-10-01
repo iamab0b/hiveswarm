@@ -16,6 +16,7 @@ import { AttentionPanel } from "@/components/Attention";
 import { Terminal } from "@/components/Terminal";
 import { StandingOrders } from "@/components/StandingOrders";
 import { DeferredList } from "@/components/Deferred";
+import { AdvisorPane, PlanPanel, useAdvisor } from "@/components/Advisor";
 import { DeleteProjectDialog } from "@/components/dialogs";
 import { act } from "@/components/actions";
 
@@ -173,6 +174,8 @@ export default function LeadPage() {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [showTerm, setShowTerm] = useState(false);
+  const [pane, setPane] = useState<"lead" | "advisor">("lead");
+  const { state: adv, reload: reloadAdvisor } = useAdvisor(project);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [del, setDel] = useState<string | null>(null);
@@ -322,7 +325,10 @@ export default function LeadPage() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-surface px-4">
-          <span className="text-[13px] font-semibold">Lead</span>
+          <div className="flex items-center rounded-md bg-surface-2 p-0.5">
+            <Button size="xs" variant="ghost" className={cn(pane === "lead" && "bg-surface text-fg shadow-sm")} onClick={() => setPane("lead")}>Lead</Button>
+            <Button size="xs" variant="ghost" className={cn(pane === "advisor" && "bg-surface text-fg shadow-sm")} onClick={() => setPane("advisor")}>Advisor{adv?.thinking ? <Loader2 className="h-3 w-3 animate-spin" /> : null}</Button>
+          </div>
           <span className="text-[13px] text-muted">for <span className="text-fg">{project || "—"}</span></span>
           {lead ? (
             <>
@@ -360,7 +366,17 @@ export default function LeadPage() {
           </div>
         ) : null}
 
+        {adv?.paused && project ? (
+          <div className="flex shrink-0 items-center gap-3 border-b border-border bg-surface-2 px-4 py-2 text-[12.5px]" data-paused>
+            <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+            <span className="text-fg">Paused</span>
+            <span className="text-muted">by {adv.paused.paused_by || "someone"}{adv.paused.reason ? `: ${adv.paused.reason}` : ""} · {age(adv.paused.paused_at)} ago · no new task starts and nothing merges until it resumes{adv.briefs_pending ? `; ${adv.briefs_pending} brief${adv.briefs_pending === 1 ? "" : "s"} waiting for the lead` : ""}</span>
+            <span className="flex-1" />
+            <Button size="xs" variant="secondary" onClick={async () => { await api.resume(project); await reloadAdvisor(); }}>Resume</Button>
+          </div>
+        ) : null}
         <div className="flex min-h-0 flex-1">
+          {pane === "advisor" && project ? <AdvisorPane project={project} state={adv} reload={reloadAdvisor} /> : (
           <div className="flex min-w-0 flex-1 flex-col">
             {showTerm && hasTerm && lead ? (
               <div className="min-h-0 flex-1"><Terminal tid={lead.id} dark={theme === "dark"} className="h-full" /></div>
@@ -404,6 +420,7 @@ export default function LeadPage() {
               <div className="mx-auto mt-1.5 max-w-[760px] text-meta">enter sends, shift+enter for a new line · the lead plans with the decide model and dispatches the swarm; its work shows on the right</div>
             </div>
           </div>
+          )}
 
           <aside className="hidden w-[300px] shrink-0 flex-col border-l border-border bg-surface lg:flex">
             <div className="text-label flex h-9 items-center gap-2 border-b border-border px-4">This lead's swarm <span className="num ml-auto text-dim">{dispatched.length}</span></div>
@@ -425,7 +442,8 @@ export default function LeadPage() {
               }) : <div className="px-2 py-6 text-center text-[12px] text-dim">tasks and sessions the lead dispatches appear here</div>}
             </div>
             {project ? (
-              <div className="grid max-h-[50%] shrink-0 gap-4 overflow-y-auto border-t border-border p-3">
+              <div className="grid max-h-[55%] shrink-0 gap-4 overflow-y-auto border-t border-border p-3">
+                <PlanPanel plan={adv?.plan || null} />
                 <StandingOrders project={project} title="Project standing orders" />
                 <DeferredList project={project} />
               </div>

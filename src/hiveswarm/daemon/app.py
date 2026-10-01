@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import db, directives, overlaps, perf, rulesets, sessions, worktree
+from .. import advisor, db, directives, overlaps, perf, rulesets, sessions, worktree
 from .. import projects as projects_mod
 from ..config import env_secret, load, load_current
 from . import dispatcher
@@ -402,10 +402,12 @@ def projects() -> dict[str, Any]:
     out = projects_mod.listing()
     cfg = load_current()
     counts = db.deferred_counts()
+    paused = advisor.paused_projects()
     for name, p in out.items():
         rs = rulesets.resolve(cfg, name)
         p["ruleset"] = rulesets.label(rs["name"], rs["intensity"])
         p["deferred_open"] = counts.get(name, 0)
+        p["paused"] = name in paused
     return out
 
 
@@ -477,6 +479,156 @@ def deferred_resolve(did: str, body: DeferredResolve) -> dict[str, Any]:
     if row["task_id"]:
         db.log_append(row["task_id"], "daemon", f"deferred item resolved{' by ' + body.by if body.by else ''}: {row['text'][:120]}")
     return {"ok": True, "item": dict(row)}
+
+
+# ── plan, pause, briefs (the advisor and the lead share these) ───────────
+
+class PlanIn(BaseModel):
+    text: str
+    by: str | None = None
+
+
+class PauseIn(BaseModel):
+    by: str | None = None
+    reason: str | None = None
+
+
+class BriefIn(BaseModel):
+    text: str
+    by: str | None = None
+
+
+@app.get("/projects/{name}/plan", dependencies=[Depends(_auth)])
+def plan_get(name: str) -> dict[str, Any]:
+    return {"project": name, "plan": advisor.plan_get(name)}
+
+
+@app.put("/projects/{name}/plan", dependencies=[Depends(_auth)])
+def plan_put(name: str, body: PlanIn) -> dict[str, Any]:
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="an empty plan")
+    return {"project": name, "plan": advisor.plan_set(name, body.text, body.by)}
+
+
+@app.post("/projects/{name}/pause", dependencies=[Depends(_auth)])
+def project_pause(name: str, body: PauseIn) -> dict[str, Any]:
+    """No new task of this project starts and nothing merges until it is resumed; running agents continue."""
+    p = advisor.pause(name, body.by, body.reason)
+    for t in db.task_list(name, None, 50):
+        if t["state"] in ("running", "claimed", "assigned"):
+            db.log_append(t["id"], "daemon", f"project paused by {body.by or 'someone'}: {body.reason or 'no reason given'}")
+    return {"ok": True, "paused": p}
+
+
+@app.post("/projects/{name}/resume", dependencies=[Depends(_auth)])
+def project_resume(name: str, by: str | None = None) -> dict[str, Any]:
+    was = advisor.resume(name)
+    return {"ok": True, "was_paused": was}
+
+
+@app.get("/projects/{name}/briefs", dependencies=[Depends(_auth)])
+def briefs_list(name: str, undelivered: bool = False) -> dict[str, Any]:
+    return {"project": name, "briefs": advisor.briefs(name, undelivered_only=undelivered)}
+
+
+@app.post("/projects/{name}/briefs", dependencies=[Depends(_auth)])
+def brief_create(name: str, body: BriefIn) -> dict[str, Any]:
+    """A brief for the lead. It reaches the lead through hm_wait; when a lead session is idle it is also typed
+    into its terminal so it acts on it at once."""
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="an empty brief")
+    b = advisor.brief_add(name, body.text, body.by)
+    lead = _live_lead(name)
+    sent_to = None
+    if lead:
+        s = lead["session"]
+        if s.get("host") and lead["state"] in ("claimed", "running") and s.get("turn") in ("idle", "waiting", None) and not s.get("attention"):
+            sessions.enqueue_command(lead["id"], "send", {"text": advisor.brief_text_for_lead(b), "enter": True}, s.get("host"))
+            advisor.brief_delivered(b["id"], "terminal")
+            sent_to = lead["id"]
+        db.log_append(lead["id"], "daemon", f"brief from {body.by or 'the advisor'}: {body.text.strip().splitlines()[0][:160]}")
+    return {"ok": True, "brief": b, "lead": lead["id"] if lead else None, "sent_to": sent_to}
+
+
+@app.post("/briefs/{bid}/delivered", dependencies=[Depends(_auth)])
+def brief_mark(bid: str, via: str = "hm_wait") -> dict[str, Any]:
+    advisor.brief_delivered(bid, via)
+    return {"ok": True}
+
+
+def _live_lead(project: str) -> dict[str, Any] | None:
+    for r in db.task_list(project, None, 200):
+        if r["kind"] != "session" or r["state"] in ("done", "failed", "abandoned"):
+            continue
+        s = sessions.get(r["id"]) or {}
+        if s.get("lead") and s.get("persistent"):
+            return {"id": r["id"], "state": r["state"], "session": s}
+    return None
+
+
+# ── the advisor ─────────────────────────────────────────────────────────
+
+class AdvisorTalk(BaseModel):
+    text: str
+
+
+class AdvisorEvent(BaseModel):
+    kind: str  # text | tool | result | status | error
+    text: str
+    ts: float | None = None
+
+
+class AdvisorDone(BaseModel):
+    host: str | None = None
+    claude_session_id: str | None = None
+    error: str | None = None
+
+
+@app.get("/advisor/{name}", dependencies=[Depends(_auth)])
+def advisor_get(name: str, limit: int = 300) -> dict[str, Any]:
+    return {**advisor.state(name), "messages": advisor.messages(name, limit)}
+
+
+@app.post("/advisor/{name}/talk", dependencies=[Depends(_auth)])
+def advisor_talk(name: str, body: AdvisorTalk) -> dict[str, Any]:
+    """Say something to the project's advisor. A worker with Claude Code runs the turn; its answer streams into
+    the conversation (GET /advisor/{name})."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="nothing to say")
+    if name not in (load_current().raw.get("projects") or {}):
+        raise HTTPException(status_code=404, detail="no such project")
+    if not any("sessions" in json.loads(a["capabilities"] or "[]") and (a["provider"] or a["agent_id"]) == "claude_code" for a in db.agents_alive()):
+        raise HTTPException(status_code=409, detail="no worker with Claude Code is alive to run the advisor")
+    turn = advisor.turn_add(name, text)
+    advisor.message_add(name, "you", text, turn_id=turn)
+    return {"ok": True, "turn": turn}
+
+
+@app.post("/advisor/turns/{turn}/events", dependencies=[Depends(_auth)])
+def advisor_events(turn: str, body: AdvisorEvent) -> dict[str, Any]:
+    r = db.one("SELECT project FROM advisor_turns WHERE id = ?", turn)
+    if r is None:
+        raise HTTPException(status_code=404, detail="no such turn")
+    advisor.message_add(r["project"], "advisor", body.text, kind=body.kind, turn_id=turn, ts=body.ts)
+    return {"ok": True}
+
+
+@app.post("/advisor/turns/{turn}/done", dependencies=[Depends(_auth)])
+def advisor_done(turn: str, body: AdvisorDone) -> dict[str, Any]:
+    r = advisor.turn_done(turn, body.host, body.claude_session_id, body.error)
+    if r is None:
+        raise HTTPException(status_code=404, detail="no such turn")
+    if body.error:
+        advisor.message_add(r["project"], "advisor", body.error, kind="error", turn_id=turn)
+    return {"ok": True}
+
+
+@app.delete("/advisor/{name}", dependencies=[Depends(_auth)])
+def advisor_forget(name: str) -> dict[str, Any]:
+    """Start the advisor's conversation over (its Claude session and the messages are dropped; the plan stays)."""
+    advisor.forget(name)
+    return {"ok": True}
 
 
 @app.get("/stats/rulesets", dependencies=[Depends(_auth)])
@@ -647,16 +799,22 @@ def session_list(project: str | None = None, limit: int = 100) -> list[dict[str,
 
 
 @app.get("/sessions/commands", dependencies=[Depends(_auth)])
-async def session_commands(request: Request, host: str, wait: float = 0) -> dict[str, Any]:
+async def session_commands(request: Request, host: str, wait: float = 0, advisor_ok: bool = False) -> dict[str, Any]:
+    """Commands for the sessions on `host`, long-polled. A host that can run Claude Code headless passes
+    advisor_ok and also receives advisor turns (one per project at a time)."""
     import asyncio
     import time as _time
     deadline = _time.time() + min(max(wait, 0), 25)
     while True:
         if await request.is_disconnected():
-            return {"commands": []}
+            return {"commands": [], "advisor": []}
         cmds = await asyncio.to_thread(sessions.take_commands, host)
-        if cmds or _time.time() >= deadline:
-            return {"commands": cmds}
+        turns = await asyncio.to_thread(advisor.turn_take, host) if advisor_ok else []
+        for t in turns:
+            plan = advisor.plan_get(t["project"])
+            t["system_prompt"] = advisor.system_prompt(t["project"], plan["text"] if plan else None, advisor.paused(t["project"]))
+        if cmds or turns or _time.time() >= deadline:
+            return {"commands": cmds, "advisor": turns}
         await asyncio.sleep(0.5)
 
 
@@ -1051,6 +1209,8 @@ def task_merge(tid: str, acknowledge_untested: bool = False) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="no such task")
     if t["state"] != "done":
         return {"ok": False, "reason": "only done tasks can be merged"}
+    if advisor.paused(t["project"]):
+        return {"ok": False, "reason": f"project {t['project']} is paused; resume it first (hm_resume or the Lead page)", "paused": True}
     untested = [f for f in db.flags_get(tid) if f.get("kind") == "untested"]
     if untested and not acknowledge_untested:
         return {"ok": False, "reason": "untested: " + untested[-1].get("summary", "") +

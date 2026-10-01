@@ -68,7 +68,8 @@ Try it without any agent installed: `pip install -e '.[dev]'` from a checkout an
 
 | | |
 |---|---|
-| ![Lead](docs/screenshots/20-lead-chat.png) The lead plans with `hm_advise`, asks before dispatching, then watches and merges. | ![Inbox](docs/screenshots/05-inbox.png) One inbox for everything that needs a human, most urgent first. |
+| ![Lead](docs/screenshots/20-lead-chat.png) The lead plans with `hm_advise`, asks before dispatching, then watches and merges. | ![Advisor](docs/screenshots/21-advisor.png) The advisor: discuss the plan beside the lead; a change of course pauses the project and briefs the lead. |
+| ![Inbox](docs/screenshots/05-inbox.png) One inbox for everything that needs a human, most urgent first. | ![Agents](docs/screenshots/08-agents.png) Agents and their profiles: model, effort and lanes, changed live. |
 | ![Stats](docs/screenshots/30-stats-performance.png) Pass rate, wall time and per-step time per agent and task type; probation is automatic. | ![Standing orders](docs/screenshots/24-session-standing-orders.png) A real terminal per session, with standing orders and events beside it. |
 | ![Hive](docs/screenshots/06-hive.png) The Hive feed: every event across every agent. | ![New goal](docs/screenshots/09-new-goal.png) Describe a goal; pick tasks, a session, or the lead. |
 
@@ -124,6 +125,7 @@ With the hub configured, the desktop app starts only a worker and the app on the
 - [docs/lead.md](docs/lead.md) — the lead agent, its MCP tools and skills, standing orders
 - [docs/craft.md](docs/craft.md) — the Craft ruleset every agent works under: the ladder, tests, the handoff, the deferred ledger, the untested flag
 - [docs/profiles.md](docs/profiles.md) — agent profiles (model + effort per `[agents.*]` table, edited live from the app), and per-project rosters
+- [docs/advisor.md](docs/advisor.md) — the advisor: talk about the plan beside the lead; pause, brief, resume
 - [docs/adapters.md](docs/adapters.md) — add your own agent as a plugin
 - [docs/architecture.md](docs/architecture.md) — how the pieces talk, the data model, the routing math
 - [DESIGN.md](DESIGN.md) — how the app looks and behaves: tokens, components, page patterns, what not to do

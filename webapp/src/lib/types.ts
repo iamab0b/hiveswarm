@@ -230,6 +230,42 @@ export interface Project {
   local?: LocalCopy | null;
   ruleset?: string;
   deferred_open?: number;
+  paused?: boolean;
+}
+
+export interface Plan {
+  project: string;
+  text: string;
+  updated_at: number;
+  updated_by: string | null;
+}
+
+export interface Pause {
+  project: string;
+  paused_at: number;
+  paused_by: string | null;
+  reason: string | null;
+}
+
+export interface AdvisorMessage {
+  id: string;
+  project: string;
+  turn_id: string | null;
+  role: "you" | "advisor";
+  kind: "text" | "tool" | "result" | "error" | "status";
+  text: string;
+  ts: number;
+}
+
+export interface AdvisorState {
+  project: string;
+  thinking: boolean;
+  has_memory: boolean;
+  host: string | null;
+  plan: Plan | null;
+  paused: Pause | null;
+  briefs_pending: number;
+  messages: AdvisorMessage[];
 }
 
 export interface DeferredItem {

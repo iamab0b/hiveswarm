@@ -411,11 +411,29 @@ class SessionHost:
             live.done.set()
         return outcome
 
+    def _lead_context(self, project: str) -> tuple[str | None, list[str]]:
+        """The stored plan and the advisor's undelivered briefs, for a lead that is starting or resuming."""
+        plan, briefs = None, []
+        try:
+            r = self.client.get(f"/projects/{project}/plan", timeout=15) or {}
+            plan = (r.get("plan") or {}).get("text")
+            bs = (self.client.get(f"/projects/{project}/briefs", timeout=15, undelivered="true") or {}).get("briefs", [])
+            for b in bs:
+                briefs.append(b["text"])
+                try:
+                    self.client.post(f"/briefs/{b['id']}/delivered", {}, timeout=15)
+                except Exception:
+                    pass
+        except Exception as e:
+            log.debug("lead context for %s: %s", project, e)
+        return plan, briefs
+
     def _session_prompt(self, task: dict[str, Any], sess: dict[str, Any], resumed: bool = False) -> str:
         if resumed and sess.get("lead"):
             note = (sess.get("resume_note") or "").strip()
+            plan, briefs = self._lead_context(task["project"])
             return _lead.lead_prompt(note or "Continue where we left off; check hm_status for the state of the swarm.",
-                                     task["project"], None, persistent=bool(sess.get("persistent")))
+                                     task["project"], None, persistent=bool(sess.get("persistent")), plan=plan, briefs=briefs)
         if resumed:
             note = (sess.get("resume_note") or "").strip()
             parts = ["The user reopened this session in Hiveswarm. The worktree still has your changes."]
@@ -424,7 +442,9 @@ class SessionHost:
                 parts.append(f"When you are done, this must exit 0: `{task['acceptance']}`.")
             return "\n".join(parts)
         if sess.get("lead"):
-            return _lead.lead_prompt(task["spec"], task["project"], task.get("acceptance"), persistent=bool(sess.get("persistent")))
+            plan, briefs = self._lead_context(task["project"])
+            return _lead.lead_prompt(task["spec"], task["project"], task.get("acceptance"), persistent=bool(sess.get("persistent")),
+                                     plan=plan, briefs=briefs)
         from .. import directives as _directives
         block = _directives.prompt_block(self.directives_for(task["id"]))
         parts = ([block] if block else []) + [task["spec"].strip()]
@@ -720,9 +740,14 @@ class SessionHost:
     # ── commands from the daemon ───────────────────────────────────────
 
     def _command_loop(self) -> None:
+        advisor_ok = bool(shutil.which("claude")) and any(
+            (a.get("adapter", name) == "claude_code") and a.get("enabled", True) is not False
+            for name, a in (self.cfg.get("agents") or {}).items())
         while True:
             try:
-                out = self.client.get("/sessions/commands", host=self.host, wait=20)
+                out = self.client.get("/sessions/commands", host=self.host, wait=20, advisor_ok="true" if advisor_ok else None)
+                for turn in (out or {}).get("advisor", []):
+                    threading.Thread(target=self._advisor_turn, args=(turn,), name=f"advisor-{turn.get('project')}", daemon=True).start()
                 for c in (out or {}).get("commands", []):
                     try:
                         res = self._handle_command(c)
@@ -799,6 +824,69 @@ class SessionHost:
             lines = capture(live.win, n).rstrip("\n").splitlines()
             return "\n".join(lines[-n:])[-12000:]
         return f"unknown command {kind}"
+
+    # ── advisor turns (headless Claude Code with the advisor's MCP role) ─
+
+    def _claude_profile(self) -> dict[str, Any]:
+        for name, a in (self.cfg.get("agents") or {}).items():
+            if a.get("adapter", name) == "claude_code" and a.get("enabled", True) is not False:
+                return dict(a)
+        return {}
+
+    def _advisor_turn(self, turn: dict[str, Any]) -> None:
+        """Run one advisor turn: `claude -p` resuming the project's advisor session, with the hiveswarm MCP server in
+        its advisor role, streaming what it says and calls into the conversation."""
+        tid = turn["id"]
+        project = turn["project"]
+        acfg = self._claude_profile()
+        env = claude_auth.auth_env(acfg)
+        cwd = self.root / "advisor" / project
+        cwd.mkdir(parents=True, exist_ok=True)
+        try:
+            claude_auth.seed_config(env["CLAUDE_CONFIG_DIR"], [str(cwd)])
+        except Exception:
+            pass
+        url = self.cfg.get("daemon_url") or os.environ.get("HIVESWARM_URL") or "http://127.0.0.1:7778"
+        token = self.cfg.get("token") or os.environ.get("HIVESWARM_TOKEN") or ""
+        binary = shutil.which("hiveswarm-mcp") or "hiveswarm-mcp"
+        mcp_cfg = json.dumps({"mcpServers": {"hiveswarm": {"type": "stdio", "command": binary, "args": [], "env": {
+            "HIVESWARM_URL": url, "HIVESWARM_TOKEN": token, "HIVESWARM_ROLE": "advisor", "HIVESWARM_ORIGIN": "advisor"}}}})
+        argv = ["claude", "-p", turn["text"], "--output-format", "stream-json", "--verbose",
+                "--mcp-config", mcp_cfg, "--allowedTools", "mcp__hiveswarm",
+                "--disallowedTools", "Bash,Edit,Write,MultiEdit,NotebookEdit",
+                "--append-system-prompt", turn.get("system_prompt") or ""]
+        if turn.get("claude_session_id"):
+            argv += ["--resume", turn["claude_session_id"]]
+        if acfg.get("model"):
+            argv += ["--model", acfg["model"]]
+        meta: dict[str, Any] = {}
+        inner = adapters.claude_parser(meta, str(cwd))
+
+        def parse(line: str) -> list[tuple[str, str]]:
+            try:
+                ev = json.loads(line.strip())
+                if isinstance(ev, dict) and ev.get("type") == "system" and ev.get("subtype") == "init" and ev.get("session_id"):
+                    meta["session_id"] = ev["session_id"]
+            except Exception:
+                pass
+            return inner(line)
+
+        def emit(kind: str, text: str) -> None:
+            if kind in ("msg", "tool", "result", "err"):
+                try:
+                    self.client.post(f"/advisor/turns/{tid}/events", {"kind": {"msg": "text", "err": "error"}.get(kind, kind), "text": text, "ts": time.time()}, timeout=15)
+                except Exception as e:
+                    log.debug("advisor event failed: %s", e)
+
+        res = adapters.run_cli(argv, str(cwd), env, int(acfg.get("timeout", 600)), emit=emit, parser=parse)
+        error = None
+        if not res.get("ok"):
+            error = f"the advisor's Claude Code run ended with {res.get('outcome')}: {(res.get('log') or '')[-400:].strip()}"
+            log.warning("advisor turn %s for %s: %s", tid[:8], project, error)
+        try:
+            self.client.post(f"/advisor/turns/{tid}/done", {"host": self.host, "claude_session_id": meta.get("session_id"), "error": error}, timeout=15)
+        except Exception as e:
+            log.warning("advisor done for %s failed: %s", tid[:8], e)
 
     # ── screen monitor (agents without hooks) ─────────────────────────
 

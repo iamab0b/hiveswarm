@@ -178,3 +178,59 @@ CREATE TABLE IF NOT EXISTS deferred (
 );
 
 CREATE INDEX IF NOT EXISTS idx_deferred_project ON deferred(project, resolved_at);
+
+CREATE TABLE IF NOT EXISTS plans (
+  project     TEXT PRIMARY KEY,
+  text        TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  updated_by  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pauses (
+  project     TEXT PRIMARY KEY,
+  paused_at   INTEGER NOT NULL,
+  paused_by   TEXT,
+  reason      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS briefs (
+  id            TEXT PRIMARY KEY,
+  project       TEXT NOT NULL,
+  text          TEXT NOT NULL,
+  created_by    TEXT,
+  created_at    INTEGER NOT NULL,
+  delivered_at  INTEGER,
+  delivered_via TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_briefs_project ON briefs(project, delivered_at);
+
+CREATE TABLE IF NOT EXISTS advisor_messages (
+  id          TEXT PRIMARY KEY,
+  project     TEXT NOT NULL,
+  turn_id     TEXT,
+  role        TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'text',
+  text        TEXT NOT NULL,
+  ts          REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_advisor_messages_project ON advisor_messages(project, ts);
+
+CREATE TABLE IF NOT EXISTS advisor_turns (
+  id                TEXT PRIMARY KEY,
+  project           TEXT NOT NULL,
+  text              TEXT NOT NULL,
+  created_at        INTEGER NOT NULL,
+  taken_at          INTEGER,
+  host              TEXT,
+  done_at           INTEGER,
+  error             TEXT
+);
+
+CREATE TABLE IF NOT EXISTS advisors (
+  project            TEXT PRIMARY KEY,
+  claude_session_id  TEXT,
+  host               TEXT,
+  updated_at         INTEGER NOT NULL
+);
