@@ -1,6 +1,6 @@
 [project]
 name = "hiveswarm"
-version = "0.2.0"
+version = "0.2.1"
 description = "A control plane for swarms of coding agents: route tasks across Claude Code, Codex, Cursor, Gemini and local models, watch and steer every agent live, and let a lead agent run the swarm."
 readme = "README.md"
 license = "MIT"

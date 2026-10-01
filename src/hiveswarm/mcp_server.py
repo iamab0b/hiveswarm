@@ -160,7 +160,9 @@ def hm_new_project(name: str) -> dict[str, Any]:
 
 @tool(advisor=True)
 def hm_agents() -> list[dict[str, Any]]:
-    """Agents registered with the daemon: liveness, host, capacity, busy lanes, capabilities (e.g. 'sessions')."""
+    """Agents registered with the daemon and the lanes the hub runs itself (`local: true`): liveness, host, capacity
+    (lanes running), `configured` (lanes in the worker's worker.toml), busy lanes, provider/model/effort, capabilities
+    (e.g. 'sessions')."""
     return _get("/agents")
 
 

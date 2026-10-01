@@ -591,6 +591,21 @@ CAPABILITIES: dict[str, list[str]] = {
 # Adapters whose CLI takes a reasoning-effort setting; the others ignore `effort` (the worker says so once).
 EFFORT_FLAGS: dict[str, str] = {"claude_code": "--effort", "codex": "-c model_reasoning_effort="}
 
+# What `model` may be set to, per adapter, for the Agents page's picker. Claude Code and Codex publish aliases and
+# ids but no way to list them; the three CLIs in MODEL_LIST_ARGS print their own list (`<id> …` per line), which the
+# app reads at most every ten minutes. Any other string still works: the picker has a free-text entry.
+MODELS: dict[str, list[str]] = {
+    "claude_code": ["best", "fable", "opus", "sonnet", "haiku", "opusplan", "sonnet[1m]", "opus[1m]", "opusplan[1m]",
+                    "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001"],
+    "codex": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5-codex"],
+    "gemini": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+}
+MODEL_LIST_ARGS: dict[str, list[str]] = {
+    "cursor": ["--list-models"],
+    "antigravity": ["--list-models"],
+    "opencode": ["models"],
+}
+
 BINARIES: dict[str, str] = {
     "claude_code": "claude",
     "codex": "codex",

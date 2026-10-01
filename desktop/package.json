@@ -1,7 +1,7 @@
 {
   "name": "hiveswarm-desktop",
   "productName": "Hiveswarm",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Hiveswarm as a desktop app: starts the engine (in WSL2 on Windows, locally on Linux and macOS) and shows the swarm in its own window.",
   "license": "MIT",
   "author": {

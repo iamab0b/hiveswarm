@@ -147,8 +147,13 @@ export interface Agent {
   provider?: string | null;
   model?: string | null;
   effort?: string | null;
+  /** lanes the worker's own worker.toml asks for (`concurrency`); null before a 0.2.1 worker registers */
+  configured?: number | null;
   alive: boolean;
   busy: number;
+  /** a lane the hub runs itself ([workers.prime_agent] / [workers.local_direct] in the hub's config.toml): one lane, no live count */
+  local?: boolean;
+  where?: string;
 }
 
 export interface Profile {
@@ -167,6 +172,9 @@ export interface AdapterInfo {
   installed: boolean;
   efforts: string[];
   effort_supported: boolean;
+  /** what `model` may be set to: a published list (claude_code, codex, gemini) or what the CLI itself lists; empty = free text */
+  models: string[];
+  models_from?: string | null;
 }
 
 export interface ProfilesInfo {

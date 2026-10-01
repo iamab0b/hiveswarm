@@ -51,7 +51,7 @@ def test_profile_added_to_worker_toml_registers_with_model_and_effort(stack):
         stack.wait_for(lambda: (_agent(stack, "opus_max") or {}).get("effort") == "high" and _agent(stack, "opus_max")["capacity"] == 2, 40, "the change to apply")
     finally:
         tomledit.write_section(wt, "agents.opus_max", None)
-        stack.wait_for(lambda: _agent(stack, "opus_max") is None or not _agent(stack, "opus_max")["alive"], 40, "the profile to retire")
+        stack.wait_for(lambda: not (_agent(stack, "opus_max") or {}).get("alive"), 40, "the profile to retire")
 
 
 def test_project_roster_restricts_routing(stack):
@@ -78,11 +78,30 @@ def test_project_roster_restricts_routing(stack):
         stack.post("/projects/demo/settings", {"agents": []})
 
 
+def test_model_lists_come_from_the_adapter_or_its_cli():
+    from hiveswarm.ui_server import parse_model_list
+    from hiveswarm.workers import adapters
+    assert "opus" in adapters.MODELS["claude_code"] and "gpt-5.5" in adapters.MODELS["codex"]
+    assert set(adapters.MODEL_LIST_ARGS) == {"cursor", "antigravity", "opencode"}
+    listing = """Available models:
+gpt-5 - GPT-5
+claude-4-sonnet - Claude 4 Sonnet (default)
+# comment
+- a bullet
+anthropic/claude-sonnet-4
+openai/gpt-4.1
+Usage: agy --list-models
+"""
+    assert parse_model_list(listing) == ["gpt-5", "claude-4-sonnet", "anthropic/claude-sonnet-4", "openai/gpt-4.1"]
+
+
 def test_app_edits_profiles_on_this_machine(stack, app_server):
     http = httpx.Client(base_url=app_server.url, timeout=30)
     before = http.get("/api/local/profiles").json()
     assert before["ok"] and {p["name"] for p in before["profiles"]} >= {"claude_code", "codex"}
-    assert next(a for a in before["adapters"] if a["name"] == "claude_code")["effort_supported"]
+    claude = next(a for a in before["adapters"] if a["name"] == "claude_code")
+    assert claude["effort_supported"] and "opus" in claude["models"] and claude["models_from"] == "list"
+    assert next(a for a in before["adapters"] if a["name"] == "cursor")["models"] == []  # no cursor-agent on PATH, no list
     r = http.post("/api/local/profiles", json={"name": "fast", "adapter": "codex", "model": "gpt-5-codex", "effort": "low", "concurrency": 1}).json()
     assert r["ok"], r
     try:
@@ -94,4 +113,4 @@ def test_app_edits_profiles_on_this_machine(stack, app_server):
         assert not http.post("/api/local/profiles", json={"name": "bad name!"}).json()["ok"]
     finally:
         assert http.delete("/api/local/profiles/fast").json()["ok"]
-        stack.wait_for(lambda: _agent(stack, "fast") is None or not _agent(stack, "fast")["alive"], 40, "the profile to retire")
+        stack.wait_for(lambda: not (_agent(stack, "fast") or {}).get("alive"), 40, "the profile to retire")

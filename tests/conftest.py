@@ -78,7 +78,7 @@ stall_minutes = 1
 silence_minutes = 2
 
 [workers.prime_agent]
-enabled = false
+enabled = true
 
 [memory]
 backend = "local"

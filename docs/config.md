@@ -114,7 +114,7 @@ Changes to `config.toml` are picked up without a restart. [craft.md](craft.md) h
 
 ### `[workers.prime_agent]`, `[workers.local_direct]`, `[inference]`
 
-Optional hub-local lanes for a machine that runs a model itself. `prime_agent` drives a coding agent inside a Docker container (`container`, `worktree_mount`, `timeout_seconds`, `extra_args`); `local_direct` asks a bare model at `inference.url` (`model`, `max_tokens`, `timeout_seconds`) for a diff. Both default to `enabled = false`; the router only considers them when enabled and reachable.
+Optional hub-local lanes for a machine that runs a model itself. `prime_agent` drives a coding agent inside a Docker container (`container`, `worktree_mount`, `timeout_seconds`, `extra_args`); `local_direct` asks a bare model at `inference.url` (`model`, `max_tokens`, `timeout_seconds`) for a diff. `prime_agent` is considered whenever its container is running unless `enabled = false`; `local_direct` only with `enabled = true`. Both appear on `GET /agents`, `hm agents` and the Agents page as *hub lanes* (`local: true`), with `alive` telling whether the container is up; they run one lane each and are configured only here, never from the app. The daemon re-reads this file on change.
 
 ## worker.toml
 
@@ -141,7 +141,7 @@ The table name is the agent id shown everywhere; `adapter` picks the implementat
 | `adapter` | the table name | all | `claude_code`, `codex`, `cursor`, `gemini`, `antigravity`, `opencode`, or a plugin ([adapters.md](adapters.md)) |
 | `enabled` | `true` | all | |
 | `binary` | adapter's default | all | executable to look for on PATH |
-| `concurrency` | `1` | all | parallel lanes for this agent at start; the Agents page and `hm agents --set` change the live count (see below) |
+| `concurrency` | `1` | all | parallel lanes for this agent; the Agents page edits it in place and the worker resizes within ~10 s (see below) |
 | `timeout` | `1800` | all | seconds per headless attempt |
 | `model` | agent's default | all | passed through to the CLI (`--model`) |
 | `effort` | agent's default | claude_code, codex | reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` for Claude Code (`--effort`), `minimal`…`xhigh` for Codex (`model_reasoning_effort`); other CLIs have no such setting and the worker says so once |
@@ -154,9 +154,11 @@ The table name is the agent id shown everywhere; `adapter` picks the implementat
 | `yolo` | `true` | gemini | `gemini --yolo` |
 | `pty` | `false` | antigravity | run under a pseudo-terminal |
 
-### Live lane counts
+### Lane counts
 
-`concurrency` is the number of lanes a worker starts with. The number it runs is changed while it runs, without a restart, from the Agents page (the +/− control on each agent's card) or the CLI:
+An agent has one lane count: `concurrency` in its `worker.toml`. The worker watches the file and resizes within about ten seconds, without a restart: new lanes start claiming at once, surplus lanes stop claiming and exit after the task they are on finishes; `0` pauses the agent. The Agents page edits that key in place, both from the +/− on the agent's card and from the lanes column of the profiles table, when the file is on the machine running the app (the laptop in a laptop-plus-hub setup); the two controls are the same number. The limit is 32 lanes per agent. The page shows "applying…" until the worker has caught up and warns when more than six lanes share one provider sign-in, since the provider's rate limits apply to all of them together.
+
+For a worker whose `worker.toml` the app cannot reach (a worker on another machine), and from the shell, there is an **override** kept by the daemon:
 
 ```bash
 hm agents --set claude_code 5
@@ -164,7 +166,7 @@ hm agents --set codex 0
 hm agents --set claude_code auto
 ```
 
-The daemon stores the wanted count per agent and every worker running that agent checks for it every 10 seconds: new lanes start claiming at once, surplus lanes stop claiming and exit after the task they are on finishes. `0` pauses an agent (nothing is routed to it until a lane is back); `auto` (or `config`/`reset`) drops the override, and the worker goes back to `concurrency`. The limit is 32 lanes per agent. The Agents page shows "applying…" until the worker has caught up and warns when more than six lanes share one provider sign-in, since the provider's rate limits apply to all of them together. A worker that restarts asks the daemon for the wanted count before starting its lanes, so the setting survives restarts and upgrades.
+Every worker running that agent checks for it every 10 seconds and sizes its lanes to the override instead of `concurrency` until it is cleared (`auto`, `config` or `reset`; the "back to worker.toml" link on the card). The override survives worker restarts: a worker that starts asks the daemon for it before starting its lanes. While one is in force, the card says so ("set with hm agents --set; worker.toml says 2") and the profiles table shows the running count beside the configured one; `hm agents` lists both (`config` and `wanted`). `GET /agents` carries `configured` (the file's value, reported by the worker) and `desired_capacity` (the override, or null). Hub lanes (`[workers.prime_agent]`, `[workers.local_direct]`) run one lane each and take no override.
 
 ## Environment variables
 

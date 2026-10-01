@@ -46,7 +46,7 @@ def conn() -> sqlite3.Connection:
 
 _COLUMNS = {
     "agents": [("capacity", "INTEGER NOT NULL DEFAULT 1"), ("desired_capacity", "INTEGER"), ("provider", "TEXT"),
-               ("model", "TEXT"), ("effort", "TEXT")],
+               ("model", "TEXT"), ("effort", "TEXT"), ("configured", "INTEGER")],
     "tasks": [("kind", "TEXT NOT NULL DEFAULT 'task'"), ("session", "TEXT"), ("preferred_agent", "TEXT"), ("flags", "TEXT")],
     "attempts": [("steps", "INTEGER"), ("step_avg_s", "REAL"), ("step_p90_s", "REAL"), ("step_max_s", "REAL"),
                  ("slow_steps", "INTEGER"), ("silence_max_s", "REAL"), ("first_action_s", "REAL"), ("think_avg_s", "REAL"),
@@ -209,19 +209,23 @@ def agent_retire(agent_id: str) -> None:
 
 
 def agent_register(agent_id: str, host: str | None, capabilities: list[str], capacity: int = 1,
-                   provider: str | None = None, model: str | None = None, effort: str | None = None) -> sqlite3.Row | None:
-    """Record a worker's agent with the lanes it actually runs. `desired_capacity` (set from the app) is kept across
-    registrations; the worker reads it from the returned row and sizes its lanes to match."""
+                   provider: str | None = None, model: str | None = None, effort: str | None = None,
+                   configured: int | None = None) -> sqlite3.Row | None:
+    """Record a worker's agent with the lanes it actually runs (`capacity`) and the lanes its worker.toml asks for
+    (`configured`). `desired_capacity` (set from the app or `hm agents --set`) is kept across registrations; the
+    worker reads it from the returned row and sizes its lanes to match."""
     t = now()
     import json as _json
     with tx() as c:
         c.execute(
-            """INSERT INTO agents (agent_id, host, capabilities, last_seen, registered_at, capacity, provider, model, effort)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """INSERT INTO agents (agent_id, host, capabilities, last_seen, registered_at, capacity, provider, model, effort, configured)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(agent_id) DO UPDATE SET host=excluded.host, capabilities=excluded.capabilities,
                  last_seen=excluded.last_seen, capacity=excluded.capacity,
-                 provider=COALESCE(excluded.provider, agents.provider), model=excluded.model, effort=excluded.effort""",
-            (agent_id, host, _json.dumps(capabilities), t, t, max(0, int(capacity)), provider, model, effort),
+                 provider=COALESCE(excluded.provider, agents.provider), model=excluded.model, effort=excluded.effort,
+                 configured=COALESCE(excluded.configured, agents.configured)""",
+            (agent_id, host, _json.dumps(capabilities), t, t, max(0, int(capacity)), provider, model, effort,
+             None if configured is None else max(0, int(configured))),
         )
     return one("SELECT * FROM agents WHERE agent_id = ?", agent_id)
 

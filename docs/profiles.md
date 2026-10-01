@@ -29,9 +29,17 @@ The worker watches `worker.toml` and applies a change within about ten seconds, 
 
 - a new or newly enabled table starts its lanes and registers with the daemon;
 - a removed or `enabled = false` table retires its lanes (each finishes the task it is on) and unregisters;
-- a changed `model` or `effort` applies to the next task the profile takes; a changed `concurrency` resizes the lanes unless the app has set a count for that agent (`hm agents --set`), which keeps winning until it is cleared.
+- a changed `model` or `effort` applies to the next task the profile takes; a changed `concurrency` resizes the lanes unless `hm agents --set` has set a count for that agent, which keeps winning until it is cleared (see [config.md](config.md#lane-counts)).
 
 The **Agents page** edits the same file on the machine that runs the app (the worker machine in a laptop-plus-hub setup): a table of profiles with model, effort, lanes and an on/off switch, and an "add profile" row. It uses `GET/POST /api/local/profiles` and `DELETE /api/local/profiles/<name>` on the app server, which edit `worker.toml` in place and leave the rest of the file (comments included) alone. `hm agents` lists what is registered, with the model and effort each profile runs.
+
+The **model** column is a dropdown. Claude Code, Codex and Gemini have a published list of aliases and ids (`MODELS` in `workers/adapters.py`: `opus`, `sonnet`, `opusplan`, `claude-opus-5-5`…; `gpt-5.5`, `gpt-5.4`, `gpt-5-codex`…; `gemini-2.5-pro`…); Cursor, Antigravity and OpenCode print their own (`cursor-agent --list-models`, `agy --list-models`, `opencode models`), which the app reads at most every ten minutes when the CLI is installed. "custom…" takes any other string, and an empty custom entry goes back to the adapter's default; a profile whose model is not on the list is shown as custom. `GET /api/local/profiles` carries the lists as `adapters[].models` with `models_from` (`"list"`, the command, or null when there is nothing to list, in which case the column is a text field).
+
+The +/− on each agent's **card** at the top of the page is the same number as the table's lanes column: `concurrency` in that agent's `worker.toml`, when the file is on the machine running the app. Changing one changes the other.
+
+## Hub lanes
+
+`[workers.prime_agent]` and `[workers.local_direct]` in the hub's `config.toml` are lanes the hub runs itself (a coding agent in a Docker container, or a bare model behind `[inference]`). They are not profiles: `GET /agents` lists them with `local: true` (and `where`, the config section behind them) when they are enabled, with `alive` meaning the container is running, and the Agents page shows them as cards marked *hub lane* and as read-only rows in the table. They run one lane each; `POST /agents/<id>/capacity` refuses them, and nothing about them can be changed from the app. See [config.md](config.md#workersprime_agent-workerslocal_direct-inference).
 
 ## How routing and advice treat profiles
 

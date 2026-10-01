@@ -133,11 +133,14 @@ def cmd_agents(a: argparse.Namespace) -> None:
     if not rows:
         print("no agents registered")
         return
-    print(f"{'agent':14} {'host':16} {'alive':6} {'busy':8} {'wanted':7} capabilities")
+    print(f"{'agent':14} {'host':16} {'alive':6} {'busy':8} {'config':7} {'wanted':7} capabilities")
     for r in rows:
         busy = f"{r.get('busy', 0)}/{r.get('capacity', 1)}"
+        config = "hub" if r.get("local") else ("?" if r.get("configured") is None else str(r["configured"]))
         wanted = "-" if r.get("desired_capacity") is None else str(r["desired_capacity"])
-        print(f"{r['agent_id']:14} {(r['host'] or '')[:16]:16} {'yes' if r['alive'] else 'no':6} {busy:8} {wanted:7} {', '.join(r['capabilities'])}")
+        print(f"{r['agent_id']:14} {(r['host'] or '')[:16]:16} {'yes' if r['alive'] else 'no':6} {busy:8} {config:7} {wanted:7} {', '.join(r['capabilities'])}")
+    print("busy = lanes busy / running; config = concurrency in the worker's worker.toml (hub = a lane the hub runs itself); "
+          "wanted = an override from hm agents --set, if any")
 
 
 def cmd_deferred(a: argparse.Namespace) -> None:

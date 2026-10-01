@@ -48,6 +48,7 @@ class Register(BaseModel):
     provider: str | None = None  # the adapter behind this agent; lanes of one provider share its usage limit
     model: str | None = None
     effort: str | None = None
+    configured: int | None = None  # lanes the worker's own worker.toml asks for (`concurrency`)
 
 
 class CapacityIn(BaseModel):
@@ -267,18 +268,48 @@ def task_live(tid: str) -> dict[str, Any]:
     return perf.live(tid, agent)
 
 
+def _hub_lanes(busy: dict[str, int], now: float) -> list[dict[str, Any]]:
+    """The lanes the hub runs itself (`[workers.prime_agent]`, `[workers.local_direct]` in config.toml). They never
+    register like a worker's agents do, so GET /agents builds their rows here: one lane each, configured in a file
+    on the hub rather than in a worker.toml, hence `local: true` and no capacity control."""
+    import socket
+
+    from ..workers import local_direct, prime_agent
+    cfg = load_current()
+    host = socket.gethostname()
+    rows: list[dict[str, Any]] = []
+    prime = (cfg.raw.get("workers") or {}).get("prime_agent") or {}
+    if prime.get("enabled") is True or prime_agent.available_cached():
+        alive = prime_agent.available_cached()
+        container = prime.get("container", "prime-agent")
+        rows.append({"agent_id": prime_agent.AGENT, "host": host, "capabilities": ["tools", "agent_loop"],
+                     "capacity": 1, "desired_capacity": None, "last_seen": now if alive else 0, "alive": alive,
+                     "busy": busy.get(prime_agent.AGENT, 0), "provider": "prime_agent",
+                     "model": cfg.get("inference.model", "coder"), "effort": None, "local": True,
+                     "where": f"[workers.prime_agent] in the hub's config.toml (container {container})"})
+    direct = (cfg.raw.get("workers") or {}).get("local_direct") or {}
+    if direct.get("enabled") is True:
+        rows.append({"agent_id": local_direct.AGENT, "host": host, "capabilities": [],
+                     "capacity": 1, "desired_capacity": None, "last_seen": now, "alive": True,
+                     "busy": busy.get(local_direct.AGENT, 0), "provider": "local_direct",
+                     "model": cfg.get("inference.model", "coder"), "effort": None, "local": True,
+                     "where": f"[workers.local_direct] in the hub's config.toml ({cfg.get('inference.url') or 'inference.url unset'})"})
+    return rows
+
+
 @app.get("/agents", dependencies=[Depends(_auth)])
 def agents() -> list[dict[str, Any]]:
     now = db.now()
     busy = db.busy_counts()
-    return [{**dict(a), "capabilities": json.loads(a["capabilities"]), "alive": (now - a["last_seen"]) < 120,
-             "busy": busy.get(a["agent_id"], 0)}
+    rows = [{**dict(a), "capabilities": json.loads(a["capabilities"]), "alive": (now - a["last_seen"]) < 120,
+             "busy": busy.get(a["agent_id"], 0), "local": False}
             for a in db.agents_all() if not (a["last_seen"] == 0 and (a["capacity"] or 0) == 0)]  # retired on purpose
+    return rows + _hub_lanes(busy, now)
 
 
 @app.post("/register", dependencies=[Depends(_auth)])
 def register(r: Register) -> dict[str, Any]:
-    row = db.agent_register(r.agent_id, r.host, r.capabilities, r.capacity, r.provider, r.model, r.effort)
+    row = db.agent_register(r.agent_id, r.host, r.capabilities, r.capacity, r.provider, r.model, r.effort, r.configured)
     return {"ok": True, "desired_capacity": row["desired_capacity"] if row else None}
 
 
@@ -287,6 +318,9 @@ def agent_capacity(agent_id: str, c: CapacityIn) -> dict[str, Any]:
     """Set how many lanes an agent should run. The worker picks it up within a few seconds, starts or retires lanes
     (a retiring lane finishes its current task first) and re-registers; `capacity` in GET /agents shows what is
     actually running, `desired_capacity` what was asked for."""
+    if agent_id in dispatcher.LOCAL_WORKERS:
+        raise HTTPException(status_code=400, detail=f"{agent_id} is a hub lane configured in the hub's config.toml "
+                                                    f"([workers.{agent_id}]); it runs one lane and has no live count")
     if c.capacity is not None and not (0 <= c.capacity <= 32):
         raise HTTPException(status_code=400, detail="capacity must be between 0 and 32 lanes")
     row = db.agent_set_desired_capacity(agent_id, c.capacity)

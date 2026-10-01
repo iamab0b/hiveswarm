@@ -16,6 +16,7 @@ import socket
 import struct
 import subprocess
 import termios
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -142,6 +143,67 @@ async def events(request: Request) -> StreamingResponse:
 
 EFFORTS = {"claude_code": ["low", "medium", "high", "xhigh", "max"], "codex": ["minimal", "low", "medium", "high", "xhigh"]}
 
+_MODELS_TTL = 600.0
+_models_cache: dict[str, tuple[float, list[str]]] = {}
+_models_lock = threading.Lock()
+_MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/\[\]+:-]*")
+
+
+def parse_model_list(text: str) -> list[str]:
+    """Model ids from a CLI's own listing: the first token of every line that looks like one (`<id> - <name>`,
+    `provider/model`, a bare id); headings, usage text and blank lines are skipped."""
+    out: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line[0] in "#-*=":
+            continue
+        tok = line.split()[0]
+        if tok.endswith(":") or tok.lower() in ("model", "models", "id", "name", "usage", "available", "the", "use", "run"):
+            continue
+        tok = tok.rstrip(",")
+        if _MODEL_ID.fullmatch(tok) and tok not in out:
+            out.append(tok)
+    return out
+
+
+def _discover_models(adapter: str, binary: str) -> list[str]:
+    """What a CLI says it can run (`cursor-agent --list-models`, `agy --list-models`, `opencode models`), cached for
+    ten minutes; an adapter with no listing command, a missing binary or a failed run gives an empty list."""
+    from .workers import adapters
+    args = adapters.MODEL_LIST_ARGS.get(adapter)
+    exe = shutil.which(binary) if args else None
+    if not exe:
+        return []
+    now = time.monotonic()
+    with _models_lock:
+        hit = _models_cache.get(adapter)
+        if hit and now - hit[0] < _MODELS_TTL:
+            return hit[1]
+    try:
+        r = subprocess.run([exe, *args], capture_output=True, text=True, timeout=15,
+                           env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"}, stdin=subprocess.DEVNULL)
+        models = parse_model_list(r.stdout) if r.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError):
+        models = []
+    with _models_lock:
+        _models_cache[adapter] = (now, models)
+    return models
+
+
+async def _adapter_info() -> list[dict[str, Any]]:
+    from .workers import adapters
+    names = sorted(adapters.ADAPTERS)
+    binaries = {a: adapters.BINARIES.get(a, a) for a in names}
+    found = await asyncio.gather(*(asyncio.to_thread(_discover_models, a, binaries[a]) for a in names))
+    out = []
+    for a, discovered in zip(names, found, strict=True):
+        curated = adapters.MODELS.get(a, [])
+        out.append({"name": a, "installed": bool(shutil.which(binaries[a])), "efforts": EFFORTS.get(a, []),
+                    "effort_supported": a in adapters.EFFORT_FLAGS,
+                    "models": curated or discovered,
+                    "models_from": "list" if curated else (f"{binaries[a]} {' '.join(adapters.MODEL_LIST_ARGS[a])}" if discovered else None)})
+    return out
+
 
 @app.get("/api/local/profiles")
 async def local_profiles() -> dict[str, Any]:
@@ -161,9 +223,7 @@ async def local_profiles() -> dict[str, Any]:
         profiles.append({"name": name, "adapter": adapter, "model": acfg.get("model"), "effort": acfg.get("effort"),
                          "concurrency": int(acfg.get("concurrency", 1)), "enabled": acfg.get("enabled", True) is not False,
                          "installed": bool(shutil.which(binary)), "binary": binary})
-    avail = [{"name": a, "installed": bool(shutil.which(adapters.BINARIES.get(a, a))), "efforts": EFFORTS.get(a, []),
-              "effort_supported": a in adapters.EFFORT_FLAGS} for a in sorted(adapters.ADAPTERS)]
-    return {"ok": True, "path": str(path), "host": S.hostname, "profiles": profiles, "adapters": avail}
+    return {"ok": True, "path": str(path), "host": S.hostname, "profiles": profiles, "adapters": await _adapter_info()}
 
 
 @app.post("/api/local/profiles")

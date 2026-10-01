@@ -531,7 +531,7 @@ class LaneManager:
         m = self.meta[agent_id]
         return _register(self.client, {"agent_id": agent_id, "host": self.host, "capabilities": m["caps"],
                                        "capacity": self.count(agent_id), "provider": m["provider"],
-                                       "model": m.get("model"), "effort": m.get("effort")})
+                                       "model": m.get("model"), "effort": m.get("effort"), "configured": m["configured"]})
 
     def reload(self) -> list[str]:
         """Re-read worker.toml's `[agents.*]` tables and apply the difference: new profiles start lanes and
@@ -709,7 +709,7 @@ def main() -> None:
         caps, adapter_name, cap = prof["caps"], prof["provider"], prof["configured"]
         manager.add_agent(agent_id, caps, adapter_name, cap, prof["model"], prof["effort"])
         ans = _register(client, {"agent_id": agent_id, "host": host, "capabilities": caps, "capacity": cap, "provider": adapter_name,
-                                 "model": prof["model"], "effort": prof["effort"]})
+                                 "model": prof["model"], "effort": prof["effort"], "configured": cap})
         desired = ans.get("desired_capacity")
         if desired is not None and int(desired) != cap:
             log.info("%s: %d lanes in worker.toml, %d set from the app; using %d", agent_id, cap, int(desired), int(desired))

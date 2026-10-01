@@ -30,6 +30,7 @@ Signing: macOS builds are unsigned (users right-click → Open once); Windows bu
 
 - 0.1.0 (2026-09-26): first public release. 0.1.1 (2026-09-27): hub mode for the desktop app, `hm migrate`.
 - 0.2.0 (2026-10-01): design system, live lane counts, the Craft ruleset, agent profiles and rosters, the advisor, memory.
+- 0.2.1 (2026-10-01): one lane count per agent, hub lanes on the Agents page, the model picker.
 
 ## After 0.2
 

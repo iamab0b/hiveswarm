@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import db, worktree
-from ..config import load
+from ..config import load, load_current
 from .adapters import _fmt, prime_parser, watch_changes
 
 AGENT = "prime_agent"
@@ -33,13 +33,29 @@ def _use_json(name: str) -> bool:
 
 
 def available() -> bool:
-    cfg = load()
+    cfg = load_current()
     if cfg.get("workers.prime_agent.enabled", True) is False:
         return False
     name = cfg.get("workers.prime_agent.container", "prime-agent")
-    r = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", name],
-                       capture_output=True, text=True, timeout=10)
+    try:
+        r = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", name],
+                           capture_output=True, text=True, timeout=10)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
     return r.returncode == 0 and r.stdout.strip() == "true"
+
+
+_avail: tuple[float, bool] = (0.0, False)
+
+
+def available_cached(ttl: float = 10.0) -> bool:
+    """`available()` at most once per `ttl` seconds, for views that are polled every second."""
+    global _avail
+    import time
+    now = time.monotonic()
+    if now - _avail[0] >= ttl:
+        _avail = (now, available())
+    return _avail[1]
 
 
 def _prompt(task: Any, wt: str | None = None) -> str:

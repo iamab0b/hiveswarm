@@ -1,9 +1,9 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { useStore } from "@/lib/store";
-import type { Agent, AgentStatus, AgentTable, RulesetRow, Task } from "@/lib/types";
+import type { Agent, AgentStatus, AgentTable, Profile, ProfilesInfo, RulesetRow, Task } from "@/lib/types";
 import { age, agentColor, agentLabel, classifyEntry, cn, firstLine, fmtPct, fmtSecs, isLive, sessionOf, short, taskAgent } from "@/lib/utils";
 import { AgentChip, EmptyState, PageHeader, StatusBadge, TaskKindIcon, taskHref } from "@/components/bits";
 import { StateBadge } from "@/components/ui/badge";
@@ -270,26 +270,52 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "su
 const MAX_LANES = 32;
 const CROWDED_LANES = 6;
 
-/** Lanes an agent is asked to run: the app's number when one is set, else what worker.toml started. */
+/** Lanes an agent is asked to run: an override from `hm agents --set` when one is set, else its worker.toml. */
 function wantedLanes(a: Agent): number {
-  return a.desired_capacity ?? a.capacity ?? 1;
+  return a.desired_capacity ?? a.configured ?? a.capacity ?? 1;
 }
 
-function LaneControl({ a, providerLanes }: { a: Agent; providerLanes: number }) {
+/** The +/− on an agent's card. One number per agent: `concurrency` in the worker's worker.toml. When that file is on
+ *  this machine the control edits it (and the table below shows the same number); for a worker elsewhere it sets the
+ *  daemon-side override that `hm agents --set` uses, and says so. Hub lanes have no control. */
+function LaneControl({ a, providerLanes, profile, reloadProfiles }: { a: Agent; providerLanes: number; profile: Profile | null; reloadProfiles: () => Promise<void> }) {
   const [pending, setPending] = useState<number | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
-  const wanted = pending === undefined ? wantedLanes(a) : pending ?? a.capacity;
-  const applying = pending !== undefined || (a.desired_capacity != null && a.desired_capacity !== a.capacity);
+  const editsFile = profile !== null;
+  const wanted = pending === undefined ? wantedLanes(a) : pending ?? a.configured ?? a.capacity;
+  const applying = pending !== undefined || (a.desired_capacity != null && a.desired_capacity !== a.capacity) || (editsFile && a.desired_capacity == null && profile.concurrency !== a.capacity);
   useEffect(() => {
     if (pending === undefined) return;
-    if (pending === null ? a.desired_capacity == null : a.desired_capacity === pending) setPending(undefined);
-  }, [a.desired_capacity, pending]);
+    if (editsFile ? a.capacity === (pending ?? a.configured) : (pending === null ? a.desired_capacity == null : a.desired_capacity === pending)) setPending(undefined);
+  }, [a.capacity, a.configured, a.desired_capacity, editsFile, pending]);
   const set = (n: number | null) => {
     setError(null);
     setPending(n);
-    api.setCapacity(a.agent_id, n).catch((e) => { setError(String(e.message || e)); setPending(undefined); });
+    const run = async () => {
+      if (editsFile && n !== null) {
+        if (a.desired_capacity != null) await api.setCapacity(a.agent_id, null);
+        const r = await api.setProfile({ name: a.agent_id, concurrency: n });
+        if (!r.ok) throw new Error(r.reason || "could not save");
+        await reloadProfiles();
+      } else {
+        await api.setCapacity(a.agent_id, n);
+      }
+    };
+    run().catch((e) => { setError(String(e.message || e)); setPending(undefined); });
   };
   const crowded = providerLanes > CROWDED_LANES;
+  if (a.local) {
+    return (
+      <div className="mt-3 border-t border-border pt-3">
+        <div className="flex items-center gap-2">
+          <span className="text-label">Lanes</span>
+          <span className="num text-meta">{a.busy || 0} of 1 busy</span>
+        </div>
+        <div className="mt-1 text-meta">one lane; {a.where || `[workers.${a.agent_id}] in config.toml on ${a.host}`}</div>
+      </div>
+    );
+  }
+  const overridden = a.desired_capacity != null;
   return (
     <div className="mt-3 border-t border-border pt-3">
       <div className="flex items-center gap-2">
@@ -303,7 +329,9 @@ function LaneControl({ a, providerLanes }: { a: Agent; providerLanes: number }) 
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 text-meta">
         {applying ? <span className="text-accent">applying…</span> : wanted === 0 ? <span className="text-accent">paused</span> : null}
-        {a.desired_capacity != null && !applying ? <button type="button" className="text-muted hover:text-fg hover:underline" onClick={() => set(null)}>back to worker.toml</button> : null}
+        {!applying && overridden ? <span>set with {editsFile ? "hm agents --set" : "the app"}; worker.toml{a.host ? ` on ${a.host}` : ""} says {a.configured ?? "?"}</span> : null}
+        {!applying && !overridden ? <span>{editsFile ? "concurrency in worker.toml, same as the table below" : `worker.toml on ${a.host || "the worker"}; set from here until its file changes`}</span> : null}
+        {overridden && !applying ? <button type="button" className="text-muted hover:text-fg hover:underline" onClick={() => set(null)}>back to worker.toml</button> : null}
         {error ? <span className="text-danger">{error}</span> : null}
       </div>
       {crowded ? <div className="mt-1 text-[12px] text-muted">{providerLanes} lanes share one {a.provider || a.agent_id} sign-in; its rate limits apply to all of them.</div> : null}
@@ -315,6 +343,11 @@ export function AgentsPage() {
   const agents = useStore((s) => s.agents);
   const tasks = useStore((s) => s.tasks);
   const now = Date.now() / 1000;
+  const [profiles, setProfiles] = useState<ProfilesInfo | null>(null);
+  const reloadProfiles = useCallback(() => api.profiles().then(setProfiles).catch(() => setProfiles({ ok: false, reason: "not reachable", profiles: [], adapters: [] })), []);
+  useEffect(() => { reloadProfiles(); }, [reloadProfiles]);
+  const profileOf = (a: Agent): Profile | null =>
+    (profiles?.ok && a.host === profiles.host && profiles.profiles.find((p) => p.name === a.agent_id)) || null;
   const lanesByProvider = useMemo(() => {
     const m: Record<string, number> = {};
     for (const a of agents) {
@@ -326,23 +359,24 @@ export function AgentsPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-5xl px-6 py-5">
-        <PageHeader title="Agents" count={agents.length || undefined} subtitle="Every agent a worker has registered, with the lanes it runs. Change the lane count here; the worker applies it without a restart." />
+        <PageHeader title="Agents" count={agents.length || undefined} subtitle="Every agent a worker has registered, and the lanes the hub runs itself. An agent's lane count is concurrency in its worker.toml: change it here or in the table below; the worker applies it without a restart." />
         <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
           {agents.map((a) => {
             const working = tasks.filter((t) => isLive(t) && taskAgent(t) === a.agent_id);
             return (
-              <Card key={a.agent_id + a.host} className="p-4">
+              <Card key={a.agent_id + a.host} className="p-4" data-agent-card={a.agent_id}>
                 <div className="flex items-center gap-2">
                   <AgentChip agent={a.agent_id} />
-                  <span className={cn("ml-auto flex items-center gap-1.5 text-[12px]", a.alive ? "text-muted" : "text-danger")}><span className={cn("h-1.5 w-1.5 rounded-full", a.alive ? "bg-success" : "bg-danger")} />{a.alive ? "alive" : "gone"}</span>
+                  {a.local ? <span className="text-meta">hub lane</span> : null}
+                  <span className={cn("ml-auto flex items-center gap-1.5 text-[12px]", a.alive ? "text-muted" : "text-danger")}><span className={cn("h-1.5 w-1.5 rounded-full", a.alive ? "bg-success" : "bg-danger")} />{a.alive ? (a.local ? "up" : "alive") : (a.local ? "down" : "gone")}</span>
                 </div>
                 <div className="mt-3 grid grid-cols-[80px_1fr] gap-x-2 gap-y-1 text-[12px] text-muted">
                   <span>host</span><span className="mono text-fg">{a.host || "—"}</span>
                   {a.provider && (a.provider !== a.agent_id || a.model || a.effort) ? <><span>runs as</span><span className="text-fg">{agentLabel(a.provider)}{a.model ? <> · <span className="mono">{a.model}</span></> : null}{a.effort ? <> · effort {a.effort}</> : null}</span></> : null}
-                  <span>last seen</span><span className="text-fg">{age(a.last_seen, now)} ago</span>
-                  <span>can do</span><span className="text-fg">{(a.capabilities || []).join(", ")}</span>
+                  {a.local ? null : <><span>last seen</span><span className="text-fg">{age(a.last_seen, now)} ago</span></>}
+                  <span>can do</span><span className="text-fg">{(a.capabilities || []).join(", ") || "—"}</span>
                 </div>
-                <LaneControl a={a} providerLanes={lanesByProvider[a.provider || a.agent_id] || 0} />
+                <LaneControl a={a} providerLanes={lanesByProvider[a.provider || a.agent_id] || 0} profile={profileOf(a)} reloadProfiles={reloadProfiles} />
                 {working.length ? (
                   <div className="mt-3 grid gap-1">
                     {working.map((t) => (
@@ -358,7 +392,7 @@ export function AgentsPage() {
           })}
           {!agents.length ? <Card className="col-span-full"><EmptyState title="No agents registered" hint="Start hiveswarm-worker (hm up does it for you); hub-local lanes (a local model on the hub) are checked directly." /></Card> : null}
         </div>
-        <Profiles />
+        <Profiles info={profiles} reload={reloadProfiles} />
       </div>
     </div>
   );

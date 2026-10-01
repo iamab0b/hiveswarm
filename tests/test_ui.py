@@ -96,7 +96,27 @@ def test_profiles_editor_and_roster_picker(stack, page):
     stack.wait_for(lambda: (agent("ui_profile") or {}).get("alive"), 40, "the worker to register the profile from the app")
     assert agent("ui_profile")["provider"] == "claude_code"
     section.locator("[data-profile=ui_profile] button", has_text="remove").click()
-    stack.wait_for(lambda: agent("ui_profile") is None or not agent("ui_profile")["alive"], 40, "the profile to retire")
+    stack.wait_for(lambda: not (agent("ui_profile") or {}).get("alive"), 40, "the profile to retire")
+
+    import tomllib
+
+    def model(name: str):
+        return tomllib.loads((stack.home / "worker.toml").read_text())["agents"][name].get("model")
+    picker = section.locator("[data-profile=codex] [data-model]")
+    picker.locator("[role=combobox]").click()
+    page.get_by_role("option", name="gpt-5.4", exact=True).click()
+    stack.wait_for(lambda: model("codex") == "gpt-5.4", 10, "the model picked from the list to reach worker.toml")
+    stack.wait_for(lambda: (agent("codex") or {}).get("model") == "gpt-5.4", 40, "the worker to re-register with the model")
+    picker.locator("[role=combobox]").click()
+    page.get_by_role("option", name="custom…").click()
+    picker.locator("input").fill("my-own-model")
+    picker.locator("input").press("Enter")
+    stack.wait_for(lambda: model("codex") == "my-own-model", 10, "a custom model to reach worker.toml")
+    picker.locator("input").fill("")
+    picker.locator("input").press("Enter")
+    stack.wait_for(lambda: model("codex") is None, 10, "an empty model to mean the default again")
+    picker.locator("[role=combobox]").wait_for(timeout=5000)
+    stack.wait_for(lambda: (agent("codex") or {}).get("model") is None, 40, "the worker to re-register without a model")
 
     page.goto(page.base + "/", wait_until="load")
     page.wait_for_timeout(500)

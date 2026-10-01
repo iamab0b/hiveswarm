@@ -4,6 +4,18 @@ All notable changes to Hiveswarm. The format follows [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-01
+
+One lane count per agent, hub lanes on the Agents page, and a model picker. Upgrading: install the 0.2.1 wheel on the hub and let the desktop app upgrade the laptop; the database adds one column (`agents.configured`) by itself. A lane count set from the app in 0.2.0 was a daemon-side override; `hm agents` shows it under `wanted`, and "back to worker.toml" on the card (or `hm agents --set <agent> auto`) clears it.
+
+### Changed
+- **One lane count.** The +/− on an agent's card and the lanes column of the profiles table are now the same number: `concurrency` in that agent's `worker.toml`, which the app edits in place when the file is on its machine and the worker applies within ~10 s. In 0.2.0 the card set a daemon-side override that silently won over the file (the two controls could disagree). The override still exists for workers on other machines and for `hm agents --set`, and is now shown as such ("set with hm agents --set; worker.toml says 2") with a link back; `GET /agents` carries `configured` (the file's value, reported by the worker) beside `desired_capacity` (the override), and `hm agents` has a `config` column. The Agents page subtitle and [docs/config.md](docs/config.md#lane-counts) say which is which.
+- The **model** column of the profiles table is a dropdown: Claude Code, Codex and Gemini get a published list of aliases and ids, Cursor, Antigravity and OpenCode what their CLI lists (`--list-models` / `opencode models`, read at most every ten minutes), plus "custom…" for anything else and "default" for none. `GET /api/local/profiles` carries `adapters[].models` and `models_from`.
+- The effort dropdown showed an empty box for "default"; it now says so.
+
+### Added
+- **Hub lanes on the Agents page.** `prime_agent` (a coding agent in a Docker container on the hub) and `local_direct` (a bare model behind `[inference]`) appear on `GET /agents`, `hm agents`, `hm_agents` and the Agents page like a worker's agents: a card with status (*up* when the container is running), host, model and what they can do, marked *hub lane*, and a read-only row in the profiles table. They are configured in the hub's `config.toml` only (`local: true`, `where` on the row), run one lane each, and `POST /agents/<id>/capacity` refuses them. The daemon notices `[workers.*]` changes without a restart, and a missing `docker` no longer errors.
+
 ## [0.2.0] — 2026-10-01
 
 The app got a design system, every agent got a way of working, and the swarm got an advisor, profiles and memory. Upgrading: install the 0.2.0 wheel on the hub and let the desktop app upgrade the laptop; the database migrates itself (new columns and tables), existing `worker.toml` and `config.toml` need no change. The Craft ruleset is on by default (`[rulesets] default = "off"` turns it off); memory stays off until `[memory] backend` is set.
@@ -68,6 +80,8 @@ First public release, renamed from the private project "Hivemind" (the name was 
 - Project deletion with optional purge; local copies of every project on each worker.
 - The web app (React, xterm.js) with Swarm, Lead, Inbox, Hive, Tasks, Stats and Agents pages, PWA install and a light theme.
 
-[Unreleased]: https://github.com/iamab0b/hiveswarm/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/iamab0b/hiveswarm/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/iamab0b/hiveswarm/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/iamab0b/hiveswarm/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/iamab0b/hiveswarm/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/iamab0b/hiveswarm/releases/tag/v0.1.0
