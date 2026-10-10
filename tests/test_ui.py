@@ -2,6 +2,7 @@
 markdown and collapsed tool calls, and the attention panel answers a question."""
 from __future__ import annotations
 
+import httpx
 import pytest
 
 PAGES = ["/", "/inbox", "/hive", "/tasks", "/stats", "/agents"]
@@ -130,3 +131,16 @@ def test_agent_tables_editor_and_roster_picker(stack, page):
     stack.wait_for(lambda: stack.get("/projects/demo/settings")["agents"] == [], 10, "the roster to be cleared")
     page.keyboard.press("Escape")
     assert not page.errors
+
+
+def test_the_page_is_never_served_from_a_stale_cache(app_server):
+    """An engine upgrade must show its own page on the next load: index.html says no-cache, the hashed assets
+    are the only thing a browser may keep."""
+    index = httpx.get(app_server.url + "/", timeout=10)
+    assert index.status_code == 200 and index.headers["cache-control"] == "no-cache"
+    assert httpx.get(app_server.url + "/agents", timeout=10).headers["cache-control"] == "no-cache", "every route serves index.html"
+    import re
+    asset = re.search(r'src="(/assets/[^"]+\.js)"', index.text).group(1)
+    r = httpx.get(app_server.url + asset, timeout=10)
+    assert r.status_code == 200 and "immutable" in r.headers["cache-control"]
+    assert '__APP_VERSION__' not in index.text

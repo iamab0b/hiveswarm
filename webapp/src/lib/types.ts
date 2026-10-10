@@ -357,6 +357,8 @@ export interface RulesetRow {
 }
 
 export interface LocalInfo {
+  product?: string;
+  version?: string;
   hostname: string;
   tmux: boolean;
   tmux_alive: boolean;

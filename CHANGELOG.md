@@ -4,6 +4,11 @@ All notable changes to Hiveswarm. The format follows [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-10-09
+
+### Fixed
+- After an engine upgrade the app kept showing the previous version's page until someone pressed reload (the browser, and the desktop window, were allowed to keep `index.html`). The app server now serves `index.html` with `Cache-Control: no-cache` (the hashed files under `assets/` stay cacheable for good), the page reloads itself once when the engine reports a version other than its own and otherwise offers a reload, and the desktop app clears the window's cache before loading the engine's page.
+
 ## [0.3.0] — 2026-10-09
 
 Profiles: a named set of models for a project's swarm, fixed once the project starts. Upgrading: install the 0.3.0 wheel on the hub and let the desktop app upgrade the laptop; the database adds one column (`agents.profile`) by itself, `config.toml` and `worker.toml` need no change. What 0.2 called a profile (an `[agents.*]` table in worker.toml) is now called an agent table; the file format and the worker are unchanged, and the app server's `/api/local/profiles` paths still answer under their new name `/api/local/agents`.
@@ -93,7 +98,8 @@ First public release, renamed from the private project "Hivemind" (the name was 
 - Project deletion with optional purge; local copies of every project on each worker.
 - The web app (React, xterm.js) with Swarm, Lead, Inbox, Hive, Tasks, Stats and Agents pages, PWA install and a light theme.
 
-[Unreleased]: https://github.com/iamab0b/hiveswarm/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/iamab0b/hiveswarm/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/iamab0b/hiveswarm/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/iamab0b/hiveswarm/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/iamab0b/hiveswarm/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/iamab0b/hiveswarm/compare/v0.1.1...v0.2.0

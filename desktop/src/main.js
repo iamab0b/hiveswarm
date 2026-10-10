@@ -121,7 +121,7 @@ async function boot(restart = false) {
   if (h.ui && !restart && current) {
     engine.setState("running", "engine already running");
     engine.log(`found Hiveswarm ${h.version} already up at ${engine.url}`);
-    win && win.loadURL(engine.url);
+    await openApp();
     return;
   }
   if (h.ui && !current) {
@@ -131,8 +131,20 @@ async function boot(restart = false) {
     if (h.version) await engine.stopExternal();
   }
   const ok = await engine.start();
-  if (ok && win) win.loadURL(engine.url);
+  if (ok) await openApp();
   else if (win) win.loadURL(bootUrl());
+}
+
+/** Load the app from the engine with an empty HTTP cache, so the page is the one this engine serves: after an
+ *  upgrade the window used to show the previous version's page until someone pressed reload. */
+async function openApp() {
+  if (!win) return;
+  try {
+    await win.webContents.session.clearCache();
+  } catch (e) {
+    engine.log(`could not clear the page cache: ${e.message}`);
+  }
+  win.loadURL(engine.url);
 }
 
 async function quit(keepRunning) {

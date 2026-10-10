@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Agent, FeedEntry, InboxItem, LocalInfo, Project, Summary, Task } from "./types";
+import { toast } from "sonner";
 import { api } from "./api";
 import { firstLine, isTerminal, liveAttention, sessionOf } from "./utils";
 
@@ -100,7 +101,17 @@ export const useStore = create<State>((set, get) => ({
   start: () => {
     if (source) return;
     document.documentElement.classList.toggle("dark", get().theme === "dark");
-    api.local().then((local) => set({ local })).catch(() => undefined);
+    api.local().then((local) => {
+      set({ local });
+      // An engine upgrade leaves a cached page behind in a browser or the desktop window; load its own page once.
+      if (local.version && local.version !== __APP_VERSION__) {
+        const key = `hm.reloaded-for.${local.version}`;
+        let done = false;
+        try { done = sessionStorage.getItem(key) === "1"; sessionStorage.setItem(key, "1"); } catch { /* no storage */ }
+        if (!done) window.location.reload();
+        else toast(`Hiveswarm ${local.version} is installed; this page is ${__APP_VERSION__}`, { description: "Reload to get the new one.", action: { label: "Reload", onClick: () => window.location.reload() }, duration: 20000 });
+      }
+    }).catch(() => undefined);
     get().loadProjects();
     api.agents().then((agents) => set({ agents })).catch(() => undefined);
 

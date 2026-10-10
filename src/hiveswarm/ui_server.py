@@ -662,12 +662,16 @@ def _tune_tmux() -> None:
 
 @app.get("/{path:path}")
 async def static(path: str) -> Response:
+    """The built app. `index.html` (and the manifest) must be checked against the server on every load, so an
+    upgraded engine shows its own page the moment the window opens; the hashed files under `assets/` never change
+    under one name, so the browser may keep those for good."""
     if not DIST.exists():
         return JSONResponse({"detail": "the web app is not built into this install (missing ui_dist)"}, status_code=503)
     target = (DIST / path).resolve() if path else DIST / "index.html"
     if path and target.is_file() and str(target).startswith(str(DIST.resolve())):
-        return FileResponse(target)
-    return FileResponse(DIST / "index.html")
+        cache = "public, max-age=31536000, immutable" if path.startswith("assets/") else "no-cache"
+        return FileResponse(target, headers={"Cache-Control": cache})
+    return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 def _open_browser(url: str) -> None:
