@@ -81,7 +81,8 @@ def test_agents_page_stepper_changes_lanes(stack, page):
     page.wait_for_timeout(2500)
     assert "applying" not in card.inner_text()
     assert "of 2 busy" in card.inner_text() and "worker.toml" in card.inner_text()
-    assert page.locator("[data-profile=codex] input[type=number]").input_value() == "2"
+    page.locator("[data-local-agents] button", has_text="show").click()
+    assert page.locator("[data-agent-row=codex] input[type=number]").input_value() == "2"
 
     stack.post("/agents/codex/capacity", {"capacity": 3})
     stack.wait_for(lambda: _capacity(stack, "codex") == 3, 30, "the override to add a lane")
@@ -106,7 +107,8 @@ def test_hub_lane_card_is_read_only(stack, page):
     text = card.inner_text()
     assert "hub lane" in text and "down" in text and "[workers.prime_agent]" in text
     assert card.locator("button[aria-label='more lanes']").count() == 0
-    row = page.locator("[data-profile=prime_agent][data-local]")
+    page.locator("[data-local-agents] button", has_text="show").click()
+    row = page.locator("[data-agent-row=prime_agent][data-local]")
     row.wait_for(timeout=10000)
     assert row.locator("input, button, [role=combobox]").count() == 0
     assert not page.errors

@@ -60,7 +60,7 @@ def agent_profile(agent_id: str, acfg: dict[str, Any], session_host: bool) -> di
     if acfg.get("effort") and adapter_name not in adapters.EFFORT_FLAGS:
         log.info("%s: the %s CLI has no effort setting; `effort` is ignored", agent_id, adapter_name)
     return {"caps": caps, "provider": adapter_name, "configured": max(0, int(acfg.get("concurrency", 1))),
-            "model": acfg.get("model"), "effort": acfg.get("effort")}
+            "model": acfg.get("model"), "effort": acfg.get("effort"), "profile": acfg.get("profile") or None}
 
 
 class Client:
@@ -520,8 +520,8 @@ class LaneManager:
         self.lock = threading.Lock()
 
     def add_agent(self, agent_id: str, caps: list[str], provider: str, configured: int,
-                  model: str | None = None, effort: str | None = None) -> None:
-        self.meta[agent_id] = {"caps": caps, "provider": provider, "configured": configured, "model": model, "effort": effort}
+                  model: str | None = None, effort: str | None = None, profile: str | None = None) -> None:
+        self.meta[agent_id] = {"caps": caps, "provider": provider, "configured": configured, "model": model, "effort": effort, "profile": profile}
         self.lanes.setdefault(agent_id, [])
 
     def count(self, agent_id: str) -> int:
@@ -531,7 +531,8 @@ class LaneManager:
         m = self.meta[agent_id]
         return _register(self.client, {"agent_id": agent_id, "host": self.host, "capabilities": m["caps"],
                                        "capacity": self.count(agent_id), "provider": m["provider"],
-                                       "model": m.get("model"), "effort": m.get("effort"), "configured": m["configured"]})
+                                       "model": m.get("model"), "effort": m.get("effort"), "configured": m["configured"],
+                                       "profile": m.get("profile")})
 
     def reload(self) -> list[str]:
         """Re-read worker.toml's `[agents.*]` tables and apply the difference: new profiles start lanes and
@@ -572,12 +573,12 @@ class LaneManager:
             old = self.meta.get(aid)
             desired = desired_by_agent.get(aid)
             if old is None:
-                self.add_agent(aid, prof["caps"], prof["provider"], prof["configured"], prof["model"], prof["effort"])
+                self.add_agent(aid, prof["caps"], prof["provider"], prof["configured"], prof["model"], prof["effort"], prof["profile"])
                 self.set_target(aid, int(desired) if desired is not None else prof["configured"])
                 self.register(aid)
                 changes.append(f"{aid} added ×{self.count(aid)}")
                 continue
-            diff = {k: prof[k] for k in ("model", "effort", "configured") if old.get(k) != prof[k]}
+            diff = {k: prof[k] for k in ("model", "effort", "configured", "profile") if old.get(k) != prof[k]}
             if diff:
                 old.update(prof)
                 if "configured" in diff:
@@ -707,9 +708,9 @@ def main() -> None:
         if prof is None:
             continue
         caps, adapter_name, cap = prof["caps"], prof["provider"], prof["configured"]
-        manager.add_agent(agent_id, caps, adapter_name, cap, prof["model"], prof["effort"])
+        manager.add_agent(agent_id, caps, adapter_name, cap, prof["model"], prof["effort"], prof["profile"])
         ans = _register(client, {"agent_id": agent_id, "host": host, "capabilities": caps, "capacity": cap, "provider": adapter_name,
-                                 "model": prof["model"], "effort": prof["effort"], "configured": cap})
+                                 "model": prof["model"], "effort": prof["effort"], "configured": cap, "profile": prof["profile"]})
         desired = ans.get("desired_capacity")
         if desired is not None and int(desired) != cap:
             log.info("%s: %d lanes in worker.toml, %d set from the app; using %d", agent_id, cap, int(desired), int(desired))

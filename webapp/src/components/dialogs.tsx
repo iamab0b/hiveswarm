@@ -10,6 +10,7 @@ import { Button } from "./ui/button";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "./ui/dialog";
 import { Input, Label, Segmented, Select, Switch, Textarea } from "./ui/fields";
 import { act } from "./actions";
+import { NO_PROFILE, ProfilePicker } from "./Profiles";
 
 type RunMode = "tasks" | "lead" | "swarm" | "session";
 const NEW = "__new__";
@@ -31,7 +32,7 @@ export function RosterPicker({ project }: { project: string }) {
     return () => { alive = false; };
   }, [project]);
   if (roster === null) return null;
-  const names = Array.from(new Set([...agents.map((a) => a.agent_id), ...roster]));
+  const names = Array.from(new Set([...agents.filter((a) => !a.profile).map((a) => a.agent_id), ...roster]));
   const save = async (next: string[]) => {
     setRoster(next);
     try {
@@ -73,6 +74,7 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
   const [agent, setAgent] = useState("claude_code");
   const [perm, setPerm] = useState("auto");
   const [count, setCount] = useState(1);
+  const [profileChoice, setProfileChoice] = useState<string>(NO_PROFILE);
   const [review, setReview] = useState(false);
   const [planning, setPlanning] = useState(false);
   const [plan, setPlan] = useState<{ spec: string; acceptance: string; include: boolean }[] | null>(null);
@@ -91,6 +93,7 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
       setPlan(null);
       setPlanning(false);
       setSubmitting(false);
+      setProfileChoice(NO_PROFILE);
       if (defaultProject && projects[defaultProject]) setProject(defaultProject);
     }
   }, [open]);
@@ -114,6 +117,10 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
     try {
       const r = await api.createProject(newName);
       toast.success(`Created project ${r.name} at ${r.repo_path}`);
+      if (profileChoice !== NO_PROFILE) {
+        await api.setProjectSettings(r.name, { profile: profileChoice });
+        api.materialize().catch(() => undefined);
+      }
       await loadProjects();
       return { name: r.name, created: true };
     } catch (e) {
@@ -210,7 +217,7 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
             <div className="grid grid-cols-[1fr_1fr] gap-3">
               <div>
                 <Label>Project</Label>
-                <Select value={project} onChange={(v) => { setTouched(true); setProject(v); }} options={[...names.map((n) => ({ value: n, label: n })), { value: NEW, label: "+ New project…" }]} />
+                <Select value={project} onChange={(v) => { setTouched(true); setProject(v); if (v === NEW) setProfileChoice(NO_PROFILE); }} options={[...names.map((n) => ({ value: n, label: n })), { value: NEW, label: "+ New project…" }]} />
               </div>
               {isNew ? (
                 <div>
@@ -240,7 +247,11 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
               <div className="grid grid-cols-[1fr_1fr_100px] gap-3">
                 <div>
                   <Label>Agent</Label>
-                  <Select value={mode === "lead" ? "claude_code" : agent} onChange={setAgent} options={sessionAgents.map((a) => ({ value: a, label: agentLabel(a) }))} />
+                  {profileChoice !== NO_PROFILE ? (
+                    <div className="flex h-8 items-center text-[13px] text-muted">the lead of profile <span className="ml-1 text-fg">{profileChoice}</span></div>
+                  ) : (
+                    <Select value={mode === "lead" ? "claude_code" : agent} onChange={setAgent} options={sessionAgents.map((a) => ({ value: a, label: agentLabel(a) }))} />
+                  )}
                 </div>
                 <div>
                   <Label>Permissions</Label>
@@ -254,7 +265,8 @@ export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boole
                 ) : <div />}
               </div>
             ) : null}
-            {!isNew && project ? <RosterPicker project={project} /> : null}
+            <ProfilePicker project={isNew ? null : project} value={profileChoice} onChange={setProfileChoice} />
+            {!isNew && project && profileChoice === NO_PROFILE ? <RosterPicker project={project} /> : null}
             {mode === "tasks" || mode === "swarm" ? (
               <Switch checked={review} onChange={(v) => { setReview(v); if (!v) setPlan(null); }} label="Let me review the plan before anything starts" />
             ) : null}

@@ -68,9 +68,11 @@ def _capable(agent_row: Any, cls: dict[str, Any] | None) -> bool:
 
 
 def roster(project: str) -> list[str]:
-    """`projects.<name>.agents`: when set, only these agents (or agents of these providers) take the project's work."""
+    """Which agents take the project's work: its profile's coders when it has a profile, else `projects.<name>.agents`
+    (agent ids or adapters), else anyone."""
+    from .. import profiles
     try:
-        return [str(a) for a in (load_current().project(project).get("agents") or [])]
+        return profiles.roster_for(load_current(), project)
     except Exception:
         return []
 
@@ -94,6 +96,11 @@ def choose(task: Any, cls: dict[str, Any] | None, busy: set[str] | None = None) 
             candidates = kept
         else:
             REASONS[task["id"]] = "roster: none of " + ", ".join(names) + " is alive; using any agent"
+    if not names:
+        owned = {a["agent_id"] for a in alive if ("profile" in a.keys()) and a["profile"]}  # a profile's lanes serve its projects
+        free = [c for c in candidates if c not in owned]
+        if free:
+            candidates = free
 
     if not candidates:
         candidates = [prime_agent.AGENT] if prime_agent.available() else [local_direct.AGENT]

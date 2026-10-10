@@ -4,6 +4,8 @@
 
 `hm lead <project> "<what you want>"` (or the Lead page in the app) starts a persistent Claude Code session on a worker with two things a normal session does not have: the `hiveswarm` MCP server, and the `hiveswarm-lead` skill plus four companions installed into its Claude config directory. It runs in a read-only worktree of the project and never edits code itself: every change, even a one-line fix, goes through the swarm so it is verified and lands as a branch.
 
+Which agent the lead runs on, and which agents its tasks go to, is the project's **profile** when it has one ([profiles.md](profiles.md)): the session starts on the profile's lead agent (`<profile>-lead`, with the model and effort the profile names), `hm_advise` reports the profile and scores only its coders, and the lead keeps its dispatching inside them. The Lead page shows the profile as a strip above the chat, with the lane count of each coder, which is the one thing about it you can still change once the project has started.
+
 Its loop, from the skill:
 
 1. **Orient** — `hm_status`, `hm_projects`, `hm_stats`, skim the repo.

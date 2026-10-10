@@ -3,7 +3,7 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { useStore } from "@/lib/store";
-import type { Agent, AgentStatus, AgentTable, Profile, ProfilesInfo, RulesetRow, Task } from "@/lib/types";
+import type { Agent, AgentStatus, AgentTable, LocalAgent, LocalAgentsInfo, RulesetRow, Task } from "@/lib/types";
 import { age, agentColor, agentLabel, classifyEntry, cn, firstLine, fmtPct, fmtSecs, isLive, sessionOf, short, taskAgent } from "@/lib/utils";
 import { AgentChip, EmptyState, PageHeader, StatusBadge, TaskKindIcon, taskHref } from "@/components/bits";
 import { StateBadge } from "@/components/ui/badge";
@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/fields";
 import { EventStream } from "@/components/EventStream";
-import { Profiles } from "@/components/Profiles";
+import { LocalAgents } from "@/components/LocalAgents";
+import { ProfilesSection } from "@/components/Profiles";
 
 const StatsCharts = lazy(() => import("./StatsCharts"));
 
@@ -278,7 +279,7 @@ function wantedLanes(a: Agent): number {
 /** The +/− on an agent's card. One number per agent: `concurrency` in the worker's worker.toml. When that file is on
  *  this machine the control edits it (and the table below shows the same number); for a worker elsewhere it sets the
  *  daemon-side override that `hm agents --set` uses, and says so. Hub lanes have no control. */
-function LaneControl({ a, providerLanes, profile, reloadProfiles }: { a: Agent; providerLanes: number; profile: Profile | null; reloadProfiles: () => Promise<void> }) {
+function LaneControl({ a, providerLanes, profile, reloadProfiles }: { a: Agent; providerLanes: number; profile: LocalAgent | null; reloadProfiles: () => Promise<void> }) {
   const [pending, setPending] = useState<number | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const editsFile = profile !== null;
@@ -294,7 +295,7 @@ function LaneControl({ a, providerLanes, profile, reloadProfiles }: { a: Agent; 
     const run = async () => {
       if (editsFile && n !== null) {
         if (a.desired_capacity != null) await api.setCapacity(a.agent_id, null);
-        const r = await api.setProfile({ name: a.agent_id, concurrency: n });
+        const r = await api.setLocalAgent({ name: a.agent_id, concurrency: n });
         if (!r.ok) throw new Error(r.reason || "could not save");
         await reloadProfiles();
       } else {
@@ -312,6 +313,19 @@ function LaneControl({ a, providerLanes, profile, reloadProfiles }: { a: Agent; 
           <span className="num text-meta">{a.busy || 0} of 1 busy</span>
         </div>
         <div className="mt-1 text-meta">one lane; {a.where || `[workers.${a.agent_id}] in config.toml on ${a.host}`}</div>
+      </div>
+    );
+  }
+  const owner = profile?.profile || a.profile;
+  if (owner) {
+    return (
+      <div className="mt-3 border-t border-border pt-3">
+        <div className="flex items-center gap-2">
+          <span className="text-label">Lanes</span>
+          <span className="num text-meta">{a.busy || 0} of {a.capacity ?? 1} busy</span>
+          <span className="num ml-auto text-[13px] font-semibold text-fg">{a.configured ?? a.capacity}</span>
+        </div>
+        <div className="mt-1 text-meta">from profile {owner}; the count is set per project, on its Lead page or in the New goal dialog</div>
       </div>
     );
   }
@@ -343,11 +357,11 @@ export function AgentsPage() {
   const agents = useStore((s) => s.agents);
   const tasks = useStore((s) => s.tasks);
   const now = Date.now() / 1000;
-  const [profiles, setProfiles] = useState<ProfilesInfo | null>(null);
-  const reloadProfiles = useCallback(() => api.profiles().then(setProfiles).catch(() => setProfiles({ ok: false, reason: "not reachable", profiles: [], adapters: [] })), []);
-  useEffect(() => { reloadProfiles(); }, [reloadProfiles]);
-  const profileOf = (a: Agent): Profile | null =>
-    (profiles?.ok && a.host === profiles.host && profiles.profiles.find((p) => p.name === a.agent_id)) || null;
+  const [local, setLocal] = useState<LocalAgentsInfo | null>(null);
+  const reloadLocal = useCallback(() => api.localAgents().then(setLocal).catch(() => setLocal({ ok: false, reason: "not reachable", agents: [], adapters: [] })), []);
+  useEffect(() => { reloadLocal(); }, [reloadLocal]);
+  const tableOf = (a: Agent): LocalAgent | null =>
+    (local?.ok && a.host === local.host && local.agents.find((p) => p.name === a.agent_id)) || null;
   const lanesByProvider = useMemo(() => {
     const m: Record<string, number> = {};
     for (const a of agents) {
@@ -359,7 +373,9 @@ export function AgentsPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-5xl px-6 py-5">
-        <PageHeader title="Agents" count={agents.length || undefined} subtitle="Every agent a worker has registered, and the lanes the hub runs itself. An agent's lane count is concurrency in its worker.toml: change it here or in the table below; the worker applies it without a restart." />
+        <PageHeader title="Agents" count={agents.length || undefined} subtitle="Profiles say which models a project runs on; below them, every agent a worker has registered and the lanes the hub runs itself. An agent's lane count is concurrency in its worker.toml; the worker applies a change without a restart." />
+        <ProfilesSection reloadLocal={reloadLocal} />
+        <div className="mb-2 text-label text-fg">Agents</div>
         <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
           {agents.map((a) => {
             const working = tasks.filter((t) => isLive(t) && taskAgent(t) === a.agent_id);
@@ -373,10 +389,11 @@ export function AgentsPage() {
                 <div className="mt-3 grid grid-cols-[80px_1fr] gap-x-2 gap-y-1 text-[12px] text-muted">
                   <span>host</span><span className="mono text-fg">{a.host || "—"}</span>
                   {a.provider && (a.provider !== a.agent_id || a.model || a.effort) ? <><span>runs as</span><span className="text-fg">{agentLabel(a.provider)}{a.model ? <> · <span className="mono">{a.model}</span></> : null}{a.effort ? <> · effort {a.effort}</> : null}</span></> : null}
+                  {a.profile ? <><span>profile</span><span className="text-fg">{a.profile}</span></> : null}
                   {a.local ? null : <><span>last seen</span><span className="text-fg">{age(a.last_seen, now)} ago</span></>}
                   <span>can do</span><span className="text-fg">{(a.capabilities || []).join(", ") || "—"}</span>
                 </div>
-                <LaneControl a={a} providerLanes={lanesByProvider[a.provider || a.agent_id] || 0} profile={profileOf(a)} reloadProfiles={reloadProfiles} />
+                <LaneControl a={a} providerLanes={lanesByProvider[a.provider || a.agent_id] || 0} profile={tableOf(a)} reloadProfiles={reloadLocal} />
                 {working.length ? (
                   <div className="mt-3 grid gap-1">
                     {working.map((t) => (
@@ -392,7 +409,7 @@ export function AgentsPage() {
           })}
           {!agents.length ? <Card className="col-span-full"><EmptyState title="No agents registered" hint="Start hiveswarm-worker (hm up does it for you); hub-local lanes (a local model on the hub) are checked directly." /></Card> : null}
         </div>
-        <Profiles info={profiles} reload={reloadProfiles} />
+        <LocalAgents info={local} reload={reloadLocal} />
       </div>
     </div>
   );

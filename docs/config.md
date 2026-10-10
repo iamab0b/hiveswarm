@@ -91,7 +91,22 @@ The token is not in the file: set `HIVESWARM_TOKEN` (in `~/.hiveswarm/env`). Wit
 | `posture` | `decide.posture` | |
 | `acceptance_templates` | `[]` | suggestions shown in the New goal dialog |
 | `ruleset`, `ruleset_intensity` | from `[rulesets]` | `"craft"` or `"off"`; `"standard"` or `"strict"` (see [craft.md](craft.md)) |
-| `agents` | `[]` | the roster: only these agent ids (or adapters) take this project's work; the New goal dialog edits it ([profiles.md](profiles.md)) |
+| `profile` | none | the profile the project runs on ([profiles.md](profiles.md)); set from the New goal dialog, fixed once the project has a task |
+| `lanes` | `{}` | per-project lane counts for the profile's coders, by agent id (`[projects.<name>.lanes]`, `deep-claude-opus-medium = 3`); the ×n steppers write it |
+| `agents` | `[]` | the roster of a project without a profile: only these agent ids (or adapters) take its work; the New goal dialog edits it ([profiles.md](profiles.md)) |
+
+### `[profiles.<name>]`
+
+Which models a project's swarm runs on ([profiles.md](profiles.md)); the Agents page writes these tables, `hm profiles` lists them.
+
+| key | | |
+|---|---|---|
+| `note` | `""` | shown on the profile's card |
+| `lead` | required | a table with `adapter` (a CLI that runs sessions), `model`, `effort`: runs the goal session and every session of a project on the profile |
+| `chat` | | `model`, `effort` for the advisor (always Claude Code) |
+| `coders.<key>` | at least one | a table per thing that codes: `adapter`, `model`, `effort`, `count` (lanes, 1–32; a hub lane is always 1). The key is what it runs (`claude-opus-medium`); the app derives it |
+
+The lead runs as agent `<name>-lead`, each coder as `<name>-<key>`; the app writes those `[agents.*]` tables into the worker.toml of its own machine and keeps them in step with the projects' lane counts. Changes to `config.toml` are picked up without a restart.
 
 ### `[rulesets]`
 

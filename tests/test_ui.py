@@ -80,29 +80,30 @@ def test_deferred_items_show_on_the_lead_page(stack, page):
 
 
 @pytest.mark.e2e
-def test_profiles_editor_and_roster_picker(stack, page):
+def test_agent_tables_editor_and_roster_picker(stack, page):
     def agent(name: str):
         return next((a for a in stack.get("/agents") if a["agent_id"] == name), None)
     page.goto(page.base + "/agents", wait_until="load")
-    section = page.locator("[data-profiles]")
+    section = page.locator("[data-local-agents]")
     section.wait_for(timeout=15000)
-    assert section.locator("[data-profile=claude_code]").count() == 1 and section.locator("[data-profile=codex]").count() == 1
-    section.locator("button", has_text="add profile").click()
-    draft = section.locator("[data-profile-draft]")
-    draft.locator("input").first.fill("ui_profile")
+    section.locator("button", has_text="show").click()
+    assert section.locator("[data-agent-row=claude_code]").count() == 1 and section.locator("[data-agent-row=codex]").count() == 1
+    section.locator("button", has_text="add agent").click()
+    draft = section.locator("[data-agent-draft]")
+    draft.locator("input").first.fill("ui_agent")
     draft.locator("input[type=number]").fill("1")
     draft.locator("button", has_text="add").click()
-    section.locator("[data-profile=ui_profile]").wait_for(timeout=15000)
-    stack.wait_for(lambda: (agent("ui_profile") or {}).get("alive"), 40, "the worker to register the profile from the app")
-    assert agent("ui_profile")["provider"] == "claude_code"
-    section.locator("[data-profile=ui_profile] button", has_text="remove").click()
-    stack.wait_for(lambda: not (agent("ui_profile") or {}).get("alive"), 40, "the profile to retire")
+    section.locator("[data-agent-row=ui_agent]").wait_for(timeout=15000)
+    stack.wait_for(lambda: (agent("ui_agent") or {}).get("alive"), 40, "the worker to register the table added from the app")
+    assert agent("ui_agent")["provider"] == "claude_code"
+    section.locator("[data-agent-row=ui_agent] button", has_text="remove").click()
+    stack.wait_for(lambda: not (agent("ui_agent") or {}).get("alive"), 40, "the table's lanes to retire")
 
     import tomllib
 
     def model(name: str):
         return tomllib.loads((stack.home / "worker.toml").read_text())["agents"][name].get("model")
-    picker = section.locator("[data-profile=codex] [data-model]")
+    picker = section.locator("[data-agent-row=codex] [data-model]")
     picker.locator("[role=combobox]").click()
     page.get_by_role("option", name="gpt-5.4", exact=True).click()
     stack.wait_for(lambda: model("codex") == "gpt-5.4", 10, "the model picked from the list to reach worker.toml")

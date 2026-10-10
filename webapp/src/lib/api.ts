@@ -1,4 +1,4 @@
-import type { AdvisorState, Agent, AgentTable, DeferredItem, Directive, FeedEntry, LiveStep, InboxItem, LocalInfo, LogEntry, Plan, ProfilesInfo, Project, ProjectSettings, RulesetRow, SessionInfo, StatRow, Summary, Task, TaskDetail } from "./types";
+import type { AdvisorState, Agent, AgentTable, DeferredItem, Directive, FeedEntry, LiveStep, InboxItem, LocalAgentsInfo, LocalInfo, LogEntry, Plan, ProfileInput, Project, ProjectProfile, ProjectSettings, RulesetRow, SessionInfo, StatRow, Summary, SwarmProfile, Task, TaskDetail } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -67,10 +67,15 @@ export const api = {
     req<{ project: string; open: number; items: DeferredItem[] }>("GET", `/projects/${project}/deferred`, undefined, includeResolved ? { include_resolved: "true" } : undefined),
   resolveDeferred: (id: string, note?: string) => req<{ ok: boolean; item: DeferredItem }>("POST", `/deferred/${id}/resolve`, { by: "you", note: note || null }),
   rulesetStats: () => req<{ rows: RulesetRow[] }>("GET", "/stats/rulesets"),
-  profiles: () => req<ProfilesInfo>("GET", "/local/profiles"),
-  setProfile: (p: { name: string; adapter?: string; model?: string | null; effort?: string | null; concurrency?: number; enabled?: boolean }) =>
-    req<{ ok: boolean; reason?: string; note?: string }>("POST", "/local/profiles", p),
-  deleteProfile: (name: string) => req<{ ok: boolean; reason?: string }>("DELETE", `/local/profiles/${name}`),
+  localAgents: () => req<LocalAgentsInfo>("GET", "/local/agents"),
+  setLocalAgent: (p: { name: string; adapter?: string; model?: string | null; effort?: string | null; concurrency?: number; enabled?: boolean }) =>
+    req<{ ok: boolean; reason?: string; note?: string }>("POST", "/local/agents", p),
+  deleteLocalAgent: (name: string) => req<{ ok: boolean; reason?: string }>("DELETE", `/local/agents/${name}`),
+  materialize: () => req<{ ok: boolean; reason?: string; changes: string[]; conflicts: string[] }>("POST", "/local/materialize"),
+  profiles: () => req<{ profiles: SwarmProfile[] }>("GET", "/profiles"),
+  setProfile: (p: ProfileInput) => req<SwarmProfile>("POST", "/profiles", p),
+  deleteProfile: (name: string) => req<{ ok: boolean }>("DELETE", `/profiles/${name}`),
+  projectProfile: (project: string) => req<ProjectProfile>("GET", `/projects/${project}/profile`),
   advisor: (project: string) => req<AdvisorState>("GET", `/advisor/${project}`),
   advisorTalk: (project: string, text: string) => req<{ ok: boolean; turn: string }>("POST", `/advisor/${project}/talk`, { text }),
   advisorForget: (project: string) => req<{ ok: boolean }>("DELETE", `/advisor/${project}`),
@@ -79,7 +84,7 @@ export const api = {
   pause: (project: string, reason: string) => req<{ ok: boolean }>("POST", `/projects/${project}/pause`, { by: "you", reason }),
   resume: (project: string) => req<{ ok: boolean; was_paused: boolean }>("POST", `/projects/${project}/resume`),
   projectSettings: (name: string) => req<ProjectSettings>("GET", `/projects/${name}/settings`),
-  setProjectSettings: (name: string, body: { agents?: string[]; ruleset?: string; ruleset_intensity?: string }) =>
+  setProjectSettings: (name: string, body: { agents?: string[]; ruleset?: string; ruleset_intensity?: string; profile?: string; lanes?: Record<string, number> }) =>
     req<ProjectSettings>("POST", `/projects/${name}/settings`, body),
   remove: (id: string) => req<{ ok: boolean }>("DELETE", `/tasks/${id}`),
   plan: (p: { goal: string; project: string; new_repo: boolean }) =>

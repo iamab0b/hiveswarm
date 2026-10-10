@@ -141,7 +141,7 @@ async def events(request: Request) -> StreamingResponse:
 
 # ── agent profiles (this machine's worker.toml) ───────────────────────────
 
-EFFORTS = {"claude_code": ["low", "medium", "high", "xhigh", "max"], "codex": ["minimal", "low", "medium", "high", "xhigh"]}
+from .workers.adapters import EFFORTS  # noqa: E402
 
 _MODELS_TTL = 600.0
 _models_cache: dict[str, tuple[float, list[str]]] = {}
@@ -205,36 +205,39 @@ async def _adapter_info() -> list[dict[str, Any]]:
     return out
 
 
-@app.get("/api/local/profiles")
-async def local_profiles() -> dict[str, Any]:
-    """The `[agents.*]` tables of this machine's worker.toml, with what each adapter supports."""
+@app.get("/api/local/agents")
+@app.get("/api/local/profiles", include_in_schema=False)  # the 0.2 name; the tables were called profiles then
+async def local_agents() -> dict[str, Any]:
+    """The `[agents.*]` tables of this machine's worker.toml, with what each adapter supports. A table written by
+    a profile carries `profile`; the app shows those read-only, since `materialize` keeps them in step."""
     from .workers import adapters
     from .workers.remote import _cfg_path
     adapters.load_plugins()
     try:
         path = _cfg_path(None)
     except FileNotFoundError:
-        return {"ok": False, "reason": "no worker.toml on this machine", "profiles": [], "adapters": []}
+        return {"ok": False, "reason": "no worker.toml on this machine", "profiles": [], "agents": [], "adapters": await _adapter_info()}
     cfg = _worker_cfg()
-    profiles = []
+    rows = []
     for name, acfg in (cfg.get("agents") or {}).items():
         adapter = acfg.get("adapter", name)
         binary = acfg.get("binary") or adapters.BINARIES.get(adapter, name)
-        profiles.append({"name": name, "adapter": adapter, "model": acfg.get("model"), "effort": acfg.get("effort"),
-                         "concurrency": int(acfg.get("concurrency", 1)), "enabled": acfg.get("enabled", True) is not False,
-                         "installed": bool(shutil.which(binary)), "binary": binary})
-    return {"ok": True, "path": str(path), "host": S.hostname, "profiles": profiles, "adapters": await _adapter_info()}
+        rows.append({"name": name, "adapter": adapter, "model": acfg.get("model"), "effort": acfg.get("effort"),
+                     "concurrency": int(acfg.get("concurrency", 1)), "enabled": acfg.get("enabled", True) is not False,
+                     "installed": bool(shutil.which(binary)), "binary": binary, "profile": acfg.get("profile") or None})
+    return {"ok": True, "path": str(path), "host": S.hostname, "profiles": rows, "agents": rows, "adapters": await _adapter_info()}
 
 
-@app.post("/api/local/profiles")
-async def local_profile_set(request: Request) -> dict[str, Any]:
+@app.post("/api/local/agents")
+@app.post("/api/local/profiles", include_in_schema=False)
+async def local_agent_set(request: Request) -> dict[str, Any]:
     """Create or change an `[agents.<name>]` table; the worker on this machine applies it within ~10 s."""
     from . import tomledit
     from .workers import adapters
     from .workers.remote import _cfg_path
     body = await request.json()
     name = str(body.get("name") or "").strip()
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", name):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
         return {"ok": False, "reason": "name: letters, digits, - and _ only"}
     try:
         path = _cfg_path(None)
@@ -242,6 +245,8 @@ async def local_profile_set(request: Request) -> dict[str, Any]:
         return {"ok": False, "reason": "no worker.toml on this machine"}
     adapters.load_plugins()
     current = (tomledit.read(path).get("agents") or {}).get(name) or {}
+    if current.get("profile"):
+        return {"ok": False, "reason": f"{name} is written by profile {current['profile']}; change the profile or the project's lane counts instead"}
     adapter = str(body.get("adapter") or current.get("adapter") or name)
     if adapter not in adapters.ADAPTERS:
         return {"ok": False, "reason": f"unknown adapter {adapter}"}
@@ -260,18 +265,112 @@ async def local_profile_set(request: Request) -> dict[str, Any]:
     return {"ok": True, "name": name, "path": str(path), "note": "the worker on this machine applies it within about 10 seconds"}
 
 
-@app.delete("/api/local/profiles/{name}")
-async def local_profile_delete(name: str) -> dict[str, Any]:
+@app.delete("/api/local/agents/{name}")
+@app.delete("/api/local/profiles/{name}", include_in_schema=False)
+async def local_agent_delete(name: str) -> dict[str, Any]:
     from . import tomledit
     from .workers.remote import _cfg_path
     try:
         path = _cfg_path(None)
     except FileNotFoundError:
         return {"ok": False, "reason": "no worker.toml on this machine"}
-    if name not in (tomledit.read(path).get("agents") or {}):
-        return {"ok": False, "reason": "no such profile"}
+    table = (tomledit.read(path).get("agents") or {}).get(name)
+    if table is None:
+        return {"ok": False, "reason": "no such agent"}
+    if table.get("profile"):
+        return {"ok": False, "reason": f"{name} is written by profile {table['profile']}; it goes when no project runs on that profile"}
     tomledit.write_section(path, f"agents.{name}", None)
     return {"ok": True, "name": name}
+
+
+# ── profiles → this machine's worker.toml ───────────────────────────────────
+
+_INHERIT_SKIP = {"adapter", "model", "effort", "concurrency", "enabled", "profile", "binary"}
+
+
+def _base_table(agents: dict[str, Any], adapter: str) -> dict[str, Any]:
+    """The hand-written table a generated one borrows its adapter settings from (`config_dir`, permissions, sandbox…):
+    the table named after the adapter, else the first table on that adapter that no profile wrote."""
+    t = agents.get(adapter)
+    if isinstance(t, dict) and not t.get("profile"):
+        return t
+    for name, t in agents.items():
+        if isinstance(t, dict) and t.get("adapter", name) == adapter and not t.get("profile"):
+            return t
+    return {}
+
+
+def materialize(wanted: dict[str, dict[str, Any]], path: Path) -> dict[str, Any]:
+    """Make this machine's worker.toml carry the `[agents.*]` tables the profiled projects need (`GET /profiles/wanted`):
+    missing tables are written with the role's adapter, model, effort and lanes plus the adapter settings of the
+    machine's own table for that adapter; tables a profile wrote earlier are updated or, once no project needs them,
+    removed. A hand-written table with a wanted name is left alone and reported. The worker applies the file."""
+    from . import tomledit
+    agents = tomledit.read(path).get("agents") or {}
+    changes: list[str] = []
+    conflicts: list[str] = []
+    for aid, spec in wanted.items():
+        cur = agents.get(aid)
+        if cur is None:
+            base = {k: v for k, v in _base_table(agents, spec["adapter"]).items() if k not in _INHERIT_SKIP and not isinstance(v, dict)}
+            table = {**base, "adapter": spec["adapter"], "model": spec.get("model"), "effort": spec.get("effort"),
+                     "concurrency": int(spec["concurrency"]), "profile": spec["profile"]}
+            tomledit.write_section(path, f"agents.{aid}", table)
+            changes.append(f"{aid} added ×{spec['concurrency']}")
+        elif cur.get("profile") != spec["profile"]:
+            conflicts.append(aid)
+        else:
+            diff = {k: spec.get(k) for k in ("model", "effort") if (cur.get(k) or None) != (spec.get(k) or None)}
+            if int(cur.get("concurrency", 1)) != int(spec["concurrency"]):
+                diff["concurrency"] = int(spec["concurrency"])
+            if cur.get("adapter") != spec["adapter"]:
+                diff["adapter"] = spec["adapter"]
+            if diff:
+                tomledit.update_section(path, f"agents.{aid}", diff)
+                changes.append(f"{aid} " + ", ".join(f"{k}={v}" for k, v in diff.items()))
+    for aid, cur in agents.items():
+        if isinstance(cur, dict) and cur.get("profile") and aid not in wanted:
+            tomledit.write_section(path, f"agents.{aid}", None)
+            changes.append(f"{aid} removed")
+    return {"ok": True, "path": str(path), "changes": changes, "conflicts": conflicts}
+
+
+async def _materialize_now() -> dict[str, Any]:
+    from .workers.remote import _cfg_path
+    try:
+        path = _cfg_path(None)
+    except FileNotFoundError:
+        return {"ok": False, "reason": "no worker.toml on this machine", "changes": [], "conflicts": []}
+    wanted = (await _fetch("/profiles/wanted")).get("tables") or {}
+    return await asyncio.to_thread(materialize, wanted, path)
+
+
+@app.post("/api/local/materialize")
+async def local_materialize() -> dict[str, Any]:
+    """Write the tables the profiled projects need into this machine's worker.toml now (the app also does this every
+    30 s); returns what changed."""
+    try:
+        return await _materialize_now()
+    except Exception as e:
+        return {"ok": False, "reason": str(e)[:200], "changes": [], "conflicts": []}
+
+
+async def _materialize_loop() -> None:
+    while True:
+        await asyncio.sleep(30)
+        try:
+            r = await _materialize_now()
+            if r.get("changes"):
+                log.info("worker.toml follows the profiles: %s", "; ".join(r["changes"]))
+            if r.get("conflicts"):
+                log.warning("worker.toml has tables a profile wants to write but did not: %s", ", ".join(r["conflicts"]))
+        except Exception as e:
+            log.debug("materialize skipped: %s", e)
+
+
+@app.on_event("startup")
+async def _start_materialize() -> None:
+    asyncio.create_task(_materialize_loop())
 
 
 # ── local project copies (this machine) ───────────────────────────────────

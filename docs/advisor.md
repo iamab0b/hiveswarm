@@ -6,7 +6,7 @@ The lead runs the swarm; the **advisor** is who you talk to about it. It sits be
 
 ## What it can do
 
-The advisor is Claude Code run headless (`claude -p … --resume`) on a worker that has it, with the hiveswarm MCP server in its **advisor role** (`HIVESWARM_ROLE=advisor`): the read-only tools (`hm_status`, `hm_list`, `hm_get`, `hm_tail`, `hm_feed`, `hm_diff`, `hm_stats`, `hm_agents`, `hm_inbox`, `hm_sessions`, `hm_screen`, `hm_deferred`, `hm_directives`) plus five of its own:
+The advisor is Claude Code run headless (`claude -p … --resume`) on a worker that has it, with the model and effort of the project's profile's *chat* role when the project has a profile ([profiles.md](profiles.md)), and the hiveswarm MCP server in its **advisor role** (`HIVESWARM_ROLE=advisor`): the read-only tools (`hm_status`, `hm_list`, `hm_get`, `hm_tail`, `hm_feed`, `hm_diff`, `hm_stats`, `hm_agents`, `hm_inbox`, `hm_sessions`, `hm_screen`, `hm_deferred`, `hm_directives`) plus five of its own:
 
 | tool | what it does |
 |---|---|

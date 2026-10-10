@@ -18,6 +18,7 @@ import { StandingOrders } from "@/components/StandingOrders";
 import { DeferredList } from "@/components/Deferred";
 import { AdvisorPane, PlanPanel, useAdvisor } from "@/components/Advisor";
 import { DeleteProjectDialog } from "@/components/dialogs";
+import { ProfileStrip } from "@/components/Profiles";
 import { act } from "@/components/actions";
 
 type Msg =
@@ -366,6 +367,7 @@ export default function LeadPage() {
           </div>
         ) : null}
 
+        {project ? <ProfileStrip project={project} /> : null}
         {adv?.paused && project ? (
           <div className="flex shrink-0 items-center gap-3 border-b border-border bg-surface-2 px-4 py-2 text-[12.5px]" data-paused>
             <span className="h-1.5 w-1.5 rounded-full bg-accent" />

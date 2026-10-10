@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from conftest import Stack, free_port  # noqa: E402
+from conftest import Stack, free_port, make_repo  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "screenshots"
@@ -80,6 +80,19 @@ def main() -> int:
                                         "permission_mode": "auto", "lead": True, "persistent": True, "origin": "you"})["id"]
         stack.wait_for(lambda: attention(stack, lead) == "question", 90, "the lead's plan question")
 
+        # ── a profile, and a second project that runs on it (its lanes appear on the Agents page) ──
+        stack.post("/profiles", {"name": "deep", "note": "Opus leads and reviews, two Opus medium lanes, Codex for tests",
+                                 "lead": {"adapter": "claude_code", "model": "opus", "effort": "max"},
+                                 "chat": {"model": "sonnet"},
+                                 "coders": [{"adapter": "claude_code", "model": "opus", "effort": "medium", "count": 2},
+                                            {"adapter": "codex", "model": "gpt-5.5", "effort": "high", "count": 1}]})
+        stack.post("/projects", {"name": "web", "repo_path": str(make_repo(home / "repos" / "web"))})
+        stack.post("/projects/web/settings", {"profile": "deep"})
+        import httpx as _httpx
+        _httpx.post(base + "/api/local/materialize", timeout=60)
+        stack.wait_for(lambda: all(any(x["agent_id"] == n and x["alive"] for x in stack.get("/agents"))
+                                   for n in ("deep-lead", "deep-claude-opus-medium", "deep-codex-gpt-5-5-high")), 60, "the profile's lanes")
+
         with sync_playwright() as play:
             exe = os.environ.get("HIVESWARM_E2E_CHROMIUM")
             browser = play.chromium.launch(executable_path=exe) if exe else play.chromium.launch()
@@ -113,6 +126,7 @@ def main() -> int:
             shot("/stats", "30-stats-performance.png")
             shot("/agents", "08-agents.png")
             shot("/lead/demo", "20-lead-chat.png", 3000)
+            shot("/lead/web", "22-lead-profile.png", 2500)
             # ── the advisor: a question, then a change of course that pauses the project and briefs the lead ──
             stack.post("/advisor/demo/talk", {"text": "What is the swarm doing right now?"})
             stack.wait_for(lambda: not stack.get("/advisor/demo")["thinking"] and stack.get("/advisor/demo")["messages"], 60, "the advisor's answer")

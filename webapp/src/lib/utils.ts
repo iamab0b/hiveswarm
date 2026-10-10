@@ -29,8 +29,20 @@ export const AGENT_LABELS: Record<string, string> = {
   opencode: "OpenCode",
 };
 
-export function agentColor(agent?: string | null): string {
-  return AGENT_COLORS[agent || ""] || "#8c8c96";
+const SEGMENT_ADAPTER: Record<string, string> = { claude: "claude_code", codex: "codex", cursor: "cursor", gemini: "gemini", agy: "antigravity", opencode: "opencode", prime: "prime_agent", direct: "local_direct" };
+
+/** The adapter behind an agent id: the id itself for a plain one, else the adapter a profile-written id carries
+ *  (`deep-claude-opus-medium` → claude_code), else nothing. */
+export function agentAdapter(agent?: string | null, provider?: string | null): string | null {
+  if (provider) return provider;
+  if (!agent) return null;
+  if (AGENT_COLORS[agent]) return agent;
+  for (const seg of agent.split("-")) if (SEGMENT_ADAPTER[seg]) return SEGMENT_ADAPTER[seg];
+  return null;
+}
+
+export function agentColor(agent?: string | null, provider?: string | null): string {
+  return AGENT_COLORS[agentAdapter(agent, provider) || ""] || "#8c8c96";
 }
 
 export function agentLabel(agent?: string | null): string {

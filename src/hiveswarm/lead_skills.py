@@ -98,6 +98,12 @@ work so its numbers can recover. Do the same when you pick:
   human can watch and steer. Use `permission_mode="auto"`.
 - Rule of thumb: if you would want to look over the agent's shoulder, make it a session.
 
+## Profiles
+
+When the advice names a `profile`, the human fixed which models work on this project: the lead (you), the advisor
+and the coders, each with a lane count. Only the profile's coders take the project's tasks, so pick among them and
+do not name agents outside it; the human changes lane counts, not you. The advice's summary shows the profile.
+
 ## Waves and lanes
 
 - Free lanes come from the advice. Dispatch at most that many tasks; the rest queue and start as lanes free up.

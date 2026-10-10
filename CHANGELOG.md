@@ -4,6 +4,19 @@ All notable changes to Hiveswarm. The format follows [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-09
+
+Profiles: a named set of models for a project's swarm, fixed once the project starts. Upgrading: install the 0.3.0 wheel on the hub and let the desktop app upgrade the laptop; the database adds one column (`agents.profile`) by itself, `config.toml` and `worker.toml` need no change. What 0.2 called a profile (an `[agents.*]` table in worker.toml) is now called an agent table; the file format and the worker are unchanged, and the app server's `/api/local/profiles` paths still answer under their new name `/api/local/agents`.
+
+### Added
+- **Profiles** ([docs/profiles.md](docs/profiles.md)): `[profiles.<name>]` in the hub's `config.toml` names which model **leads** (the goal session), which one **chats** (the advisor) and which ones **code** the tasks, each coder with a lane count. The Agents page shows each profile as a card (lead and chat rows, a row per coder with its lanes and live state) with an editor; `hm profiles` lists them, `hm profiles --project` shows what a project runs on; `GET/POST/DELETE /profiles` is the API.
+- **A project runs on one profile.** The New goal dialog has a *Profile* select (the profiles, *Any agent*, *New profile…*); the choice is saved on the project (`projects.<name>.profile`) and applied to a new project right after it is created. From the project's first task on the profile is fixed — the select locks and `POST /projects/<name>/settings` refuses a change — and only the **lane count of each coder** still changes, per project, from the ×n steppers in the dialog and in the new strip at the top of the Lead page (`projects.<name>.lanes`). The lead session starts on the profile's lead agent, the advisor runs with the chat role's model and effort, routing and `hm_advise` use the profile's coders as the roster, and the `hiveswarm-route` skill tells the lead to stay inside them.
+- **Profiles write their own agent tables.** The app keeps the `worker.toml` of its machine in step with the profiled projects (`GET /profiles/wanted`, `POST /api/local/materialize`, and every thirty seconds): the lead as `<profile>-lead` with one lane per project on the profile, each coder as `<profile>-<key>` with the largest count any of those projects asks for, each table carrying the adapter settings of the machine's own table for that adapter and a `profile` marker; tables no project needs any more are removed. The worker applies the file live as before and reports `profile` when it registers; an agent a profile wrote shows it on its card and in the table, is read-only there, stays out of the roster chips, and takes work only from projects on that profile.
+
+### Changed
+- The table at the bottom of the Agents page is *Agents on &lt;host&gt;* (behind *show*), its rows are agent tables, and its endpoints are `/api/local/agents`.
+- `GET /agents` carries `profile`; `hm_advise` carries `profile` and names it in its summary.
+
 ## [0.2.1] — 2026-10-01
 
 One lane count per agent, hub lanes on the Agents page, and a model picker. Upgrading: install the 0.2.1 wheel on the hub and let the desktop app upgrade the laptop; the database adds one column (`agents.configured`) by itself. A lane count set from the app in 0.2.0 was a daemon-side override; `hm agents` shows it under `wanted`, and "back to worker.toml" on the card (or `hm agents --set <agent> auto`) clears it.
@@ -80,7 +93,8 @@ First public release, renamed from the private project "Hivemind" (the name was 
 - Project deletion with optional purge; local copies of every project on each worker.
 - The web app (React, xterm.js) with Swarm, Lead, Inbox, Hive, Tasks, Stats and Agents pages, PWA install and a light theme.
 
-[Unreleased]: https://github.com/iamab0b/hiveswarm/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/iamab0b/hiveswarm/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/iamab0b/hiveswarm/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/iamab0b/hiveswarm/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/iamab0b/hiveswarm/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/iamab0b/hiveswarm/compare/v0.1.0...v0.1.1

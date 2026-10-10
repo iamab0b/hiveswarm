@@ -210,7 +210,8 @@ def hm_advise(project: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
     """Size the swarm before dispatching. For each planned task ({"spec": "..."}), the decide model classifies
     it and Hiveswarm's routing data picks the agent: returns per task the mode (headless or interactive), the recommended
     agent with a pass estimate and the reason, alternatives, plus how many lanes are free per agent right now and how
-    many waves the plan needs. Call this after planning and before hm_add_tasks / hm_new_session."""
+    many waves the plan needs. `profile` names the project's profile when it has one: its coders are the only agents
+    that take the project's tasks, so pick from them. Call this after planning and before hm_add_tasks / hm_new_session."""
     return _post("/advise", {"project": project, "tasks": [{"spec": t.get("spec") or ""} for t in tasks][:20]}, timeout=180)
 
 

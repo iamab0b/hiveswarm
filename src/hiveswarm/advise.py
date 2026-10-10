@@ -156,7 +156,9 @@ def advise(project: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
         speed = perf.statuses()
     except Exception:
         speed = {}
-    names = [str(a) for a in (load_current().project(project).get("agents") or [])]
+    from . import profiles as _profiles
+    prof = _profiles.for_project(load_current(), project)
+    names = _profiles.roster_for(load_current(), project)
     on_roster = {a for a, l in lanes.items() if a in names or l.get("provider") in names} if names else set(lanes)
     roster_note = None
     if names and not on_roster:
@@ -239,7 +241,9 @@ def advise(project: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
         shared = [f"{prov} {v['free']}/{v['capacity']} across {', '.join(v['agents'])}" for prov, v in providers.items() if len(v["agents"]) > 1]
         if shared:
             parts.append("lanes sharing one sign-in: " + "; ".join(shared))
-        if names:
+        if prof and not prof.get("error"):
+            parts.append("profile " + _profiles.describe(prof))
+        elif names:
             parts.append("roster: " + ", ".join(names))
         if roster_note:
             parts.append(roster_note)
@@ -254,6 +258,7 @@ def advise(project: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
         "lanes": lanes,
         "providers": providers,
         "roster": names,
+        "profile": prof["name"] if prof else None,
         "free_lanes": total_free,
         "waves": waves,
         "probation": sorted(probation_notes),

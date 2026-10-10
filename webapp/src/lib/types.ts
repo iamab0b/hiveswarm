@@ -149,6 +149,8 @@ export interface Agent {
   effort?: string | null;
   /** lanes the worker's own worker.toml asks for (`concurrency`); null before a 0.2.1 worker registers */
   configured?: number | null;
+  /** the profile that wrote this agent's table; its lanes work for the projects on that profile */
+  profile?: string | null;
   alive: boolean;
   busy: number;
   /** a lane the hub runs itself ([workers.prime_agent] / [workers.local_direct] in the hub's config.toml): one lane, no live count */
@@ -156,7 +158,8 @@ export interface Agent {
   where?: string;
 }
 
-export interface Profile {
+/** An `[agents.<name>]` table in this machine's worker.toml. `profile` names the profile that wrote it. */
+export interface LocalAgent {
   name: string;
   adapter: string;
   model: string | null;
@@ -165,6 +168,7 @@ export interface Profile {
   enabled: boolean;
   installed: boolean;
   binary: string;
+  profile?: string | null;
 }
 
 export interface AdapterInfo {
@@ -177,12 +181,12 @@ export interface AdapterInfo {
   models_from?: string | null;
 }
 
-export interface ProfilesInfo {
+export interface LocalAgentsInfo {
   ok: boolean;
   reason?: string;
   path?: string;
   host?: string;
-  profiles: Profile[];
+  agents: LocalAgent[];
   adapters: AdapterInfo[];
 }
 
@@ -192,6 +196,57 @@ export interface ProjectSettings {
   ruleset: string;
   ruleset_intensity: string;
   ruleset_set: boolean;
+  profile: string | null;
+  lanes: Record<string, number>;
+  started: boolean;
+  task_count: number;
+}
+
+/** One role of a profile: what runs it. */
+export interface ProfileRole {
+  adapter: string;
+  model: string | null;
+  effort: string | null;
+  agent_id?: string;
+  live?: Agent | null;
+}
+
+export interface ProfileCoder extends ProfileRole {
+  key: string;
+  agent_id: string;
+  count: number;
+  default_count?: number;
+  hub: boolean;
+}
+
+/** A profile as the hub keeps it: which models lead, chat and code, and the projects on it. */
+export interface SwarmProfile {
+  name: string;
+  note: string;
+  error?: string | null;
+  lead: ProfileRole | null;
+  chat: ProfileRole | null;
+  coders: ProfileCoder[];
+  used_by: { project: string; started: boolean }[];
+  locked: boolean;
+}
+
+export interface ProfileInput {
+  name: string;
+  note?: string;
+  lead: { adapter: string; model?: string | null; effort?: string | null };
+  chat: { model?: string | null; effort?: string | null };
+  coders: { adapter: string; model?: string | null; effort?: string | null; count: number }[];
+}
+
+/** A project's profile resolved to agent ids, effective lane counts and live rows. */
+export interface ProjectProfile {
+  project: string;
+  profile: string | null;
+  started: boolean;
+  task_count: number;
+  locked: boolean;
+  resolved: { name: string; note?: string; error?: string | null; lead: ProfileRole | null; chat: ProfileRole | null; coders: ProfileCoder[] } | null;
 }
 
 export interface InboxItem {
@@ -239,6 +294,8 @@ export interface Project {
   ruleset?: string;
   deferred_open?: number;
   paused?: boolean;
+  profile?: string | null;
+  started?: boolean;
 }
 
 export interface Plan {

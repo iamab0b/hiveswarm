@@ -5,16 +5,16 @@ import { agentColor, agentLabel, cn, elapsed, openStep, sessionOf } from "@/lib/
 import type { AgentStatus, FeedEntry, Task } from "@/lib/types";
 import { Badge, type Tone } from "./ui/badge";
 
-export function AgentDot({ agent, className }: { agent?: string | null; className?: string }) {
-  return <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", className)} style={{ background: agentColor(agent) }} />;
+export function AgentDot({ agent, provider, className }: { agent?: string | null; provider?: string | null; className?: string }) {
+  return <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", className)} style={{ background: agentColor(agent, provider) }} />;
 }
 
-/** An agent's name in a neutral chip; the hue dot is the only colour. */
-export function AgentChip({ agent, size = "md", lead, session, className }: { agent?: string | null; size?: "sm" | "md"; lead?: boolean; session?: boolean; className?: string }) {
+/** An agent's name in a neutral chip; the hue dot is the only colour. `label` shows something other than the id. */
+export function AgentChip({ agent, provider, label, size = "md", lead, session, className }: { agent?: string | null; provider?: string | null; label?: string; size?: "sm" | "md"; lead?: boolean; session?: boolean; className?: string }) {
   return (
     <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap rounded-sm border border-border bg-surface font-medium text-fg", size === "sm" ? "h-5 px-1.5 text-[11px]" : "h-6 px-2 text-[12px]", className)}>
-      <AgentDot agent={agent} />
-      {agentLabel(agent)}
+      <AgentDot agent={agent} provider={provider} />
+      {label ?? agentLabel(agent)}
       {lead ? <Crown className="h-3 w-3 text-muted" /> : session ? <TerminalSquare className="h-3 w-3 text-muted" /> : null}
     </span>
   );

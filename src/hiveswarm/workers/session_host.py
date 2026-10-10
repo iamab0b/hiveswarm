@@ -868,8 +868,10 @@ class SessionHost:
                 "--append-system-prompt", turn.get("system_prompt") or ""]
         if turn.get("claude_session_id"):
             argv += ["--resume", turn["claude_session_id"]]
-        if acfg.get("model"):
-            argv += ["--model", acfg["model"]]
+        if turn.get("model") or acfg.get("model"):
+            argv += ["--model", turn.get("model") or acfg["model"]]
+        if turn.get("effort"):
+            argv += ["--effort", str(turn["effort"])]
         meta: dict[str, Any] = {}
         inner = adapters.claude_parser(meta, str(cwd))
 

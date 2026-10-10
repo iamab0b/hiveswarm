@@ -31,11 +31,12 @@ Signing: macOS builds are unsigned (users right-click → Open once); Windows bu
 - 0.1.0 (2026-09-26): first public release. 0.1.1 (2026-09-27): hub mode for the desktop app, `hm migrate`.
 - 0.2.0 (2026-10-01): design system, live lane counts, the Craft ruleset, agent profiles and rosters, the advisor, memory.
 - 0.2.1 (2026-10-01): one lane count per agent, hub lanes on the Agents page, the model picker.
+- 0.3.0 (2026-10-09): profiles — which models lead, chat and code for a project, fixed once it starts.
 
 ## After 0.2
 
-- 0.2.x: bug fixes from first users of the advisor and profiles; no interface changes.
-- 0.3: the daemon HTTP API gets a version prefix; worker config validated with a schema and `hm doctor`; macOS worker support tested in CI; Letta Code as an adapter.
+- 0.3.x: bug fixes from first users of profiles and the advisor; no interface changes.
+- 0.4: the daemon HTTP API gets a version prefix; worker config validated with a schema and `hm doctor`; macOS worker support tested in CI; Letta Code as an adapter.
 - Adapter contract and MCP tool set are frozen at 1.0.
 
 ## Announcing

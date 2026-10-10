@@ -23,7 +23,8 @@ You already pay for several coding agents. Hiveswarm makes them one team:
 - **A lead agent can run the whole thing.** `hm lead <project>` starts a persistent Claude Code session with the `hiveswarm` MCP server and five skills (plan, route, review, triage, craft). Tell it what the project needs; it plans, sizes the swarm, dispatches, watches, reviews and merges, and asks you only when it has to.
 - **Standing orders keep agents honest.** A rule you set — "never copy from repos we can't license", "run the tests before every commit" — sits at the top of every prompt, is re-injected on a cadence (through hooks for Claude Code, typed in for the others), and is audited: a likely violation is flagged in the inbox and to the lead.
 - **Every agent works to one standard.** The Craft ruleset (understand first, a production-code ladder adapted from Ponytail, tests required but not excess, a Changed / Tested / Deferred handoff) goes into every prompt and session. Hiveswarm reads the handoff back: deferred shortcuts land in a ledger, and code that changed with no test touched or run is flagged `untested` and cannot merge until someone looks.
-- **Talk about the plan without stopping the swarm.** The advisor sits beside the lead with read-only tools, the plan on file and memory of what the swarm learned; when you change course it pauses the project, briefs the lead, and the lead resumes once it has adjusted. Profiles give one CLI several models and effort levels, changed live from the Agents page.
+- **Talk about the plan without stopping the swarm.** The advisor sits beside the lead with read-only tools, the plan on file and memory of what the swarm learned; when you change course it pauses the project, briefs the lead, and the lead resumes once it has adjusted.
+- **A profile per project.** Name which model leads, which one chats and which ones code, with lanes per coder; pick the profile when you start a goal and it stays for the project, only its lane counts change. The app writes the agent tables the profile needs into `worker.toml` and the worker picks them up live.
 - **Your machines, your keys.** Hiveswarm runs on one laptop, or a hub that holds the repos plus any number of workers that run the agent CLIs. Classification uses any OpenAI-compatible endpoint, a model you run yourself, or a built-in mock. Nothing leaves your machines except what the agents and the classifier you chose send.
 
 ## Install
@@ -71,9 +72,10 @@ Try it without any agent installed: `pip install -e '.[dev]'` from a checkout an
 | | |
 |---|---|
 | ![Lead](docs/screenshots/20-lead-chat.png) The lead plans with `hm_advise`, asks before dispatching, then watches and merges. | ![Advisor](docs/screenshots/21-advisor.png) The advisor: discuss the plan beside the lead; a change of course pauses the project and briefs the lead. |
-| ![Inbox](docs/screenshots/05-inbox.png) One inbox for everything that needs a human, most urgent first. | ![Agents](docs/screenshots/08-agents.png) Agents and their profiles: model, effort and lanes, changed live. |
+| ![Agents](docs/screenshots/08-agents.png) Profiles (lead, chat, coders with lanes) and the agents behind them. | ![Profile strip](docs/screenshots/22-lead-profile.png) A project's profile above its lead; the lane counts are what you can still change. |
+| ![Inbox](docs/screenshots/05-inbox.png) One inbox for everything that needs a human, most urgent first. | ![New goal](docs/screenshots/09-new-goal.png) Describe a goal; pick a profile, then tasks, a session, or the lead. |
 | ![Stats](docs/screenshots/30-stats-performance.png) Pass rate, wall time and per-step time per agent and task type; probation is automatic. | ![Standing orders](docs/screenshots/24-session-standing-orders.png) A real terminal per session, with standing orders and events beside it. |
-| ![Hive](docs/screenshots/06-hive.png) The Hive feed: every event across every agent. | ![New goal](docs/screenshots/09-new-goal.png) Describe a goal; pick tasks, a session, or the lead. |
+| ![Hive](docs/screenshots/06-hive.png) The Hive feed: every event across every agent. | ![Light theme](docs/screenshots/11-swarm-light.png) The same swarm in the light theme. |
 
 Light theme, keyboard-first (press <kbd>?</kbd>), installable as a PWA.
 
@@ -126,7 +128,7 @@ With the hub configured, the desktop app starts only a worker and the app on the
 - [docs/two-machines.md](docs/two-machines.md) — hub + workers, systemd units, a local model box, network diagnostics (`hm net`)
 - [docs/lead.md](docs/lead.md) — the lead agent, its MCP tools and skills, standing orders
 - [docs/craft.md](docs/craft.md) — the Craft ruleset every agent works under: the ladder, tests, the handoff, the deferred ledger, the untested flag
-- [docs/profiles.md](docs/profiles.md) — agent profiles (model + effort per `[agents.*]` table, edited live from the app), and per-project rosters
+- [docs/profiles.md](docs/profiles.md) — profiles (which models lead, chat and code for a project), the agent tables behind them, and rosters
 - [docs/advisor.md](docs/advisor.md) — the advisor: talk about the plan beside the lead; pause, brief, resume
 - [docs/memory.md](docs/memory.md) — memory across tasks: a local full-text index or a Hindsight server; lessons the lead and advisor recall
 - [docs/adapters.md](docs/adapters.md) — add your own agent as a plugin

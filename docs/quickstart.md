@@ -88,7 +88,7 @@ hm lead myapp "Ship user avatars: upload, resize, serve. Tests for each piece."
 
 In the app, <kbd>g</kbd> opens the same three choices. <kbd>?</kbd> lists the keys.
 
-Every agent works under the Craft ruleset ([craft.md](craft.md)): it ends with a Changed / Tested / Deferred handoff, deferred shortcuts collect in a ledger on the Lead page, and a change with no test behind it waits in the inbox as *untested* until you look. The *Advisor* switch on the Lead page is where you discuss the plan while the lead works ([advisor.md](advisor.md)); the Agents page is where you add profiles (one CLI, several models and effort levels) and change lane counts live ([profiles.md](profiles.md)).
+Every agent works under the Craft ruleset ([craft.md](craft.md)): it ends with a Changed / Tested / Deferred handoff, deferred shortcuts collect in a ledger on the Lead page, and a change with no test behind it waits in the inbox as *untested* until you look. The *Advisor* switch on the Lead page is where you discuss the plan while the lead works ([advisor.md](advisor.md)); the Agents page is where you make profiles (which models lead, chat and code, with lanes per coder) to pick when you start a goal, and where the agents behind them live ([profiles.md](profiles.md)).
 
 ## 7. Where things are
 

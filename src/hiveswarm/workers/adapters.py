@@ -590,6 +590,8 @@ CAPABILITIES: dict[str, list[str]] = {
 
 # Adapters whose CLI takes a reasoning-effort setting; the others ignore `effort` (the worker says so once).
 EFFORT_FLAGS: dict[str, str] = {"claude_code": "--effort", "codex": "-c model_reasoning_effort="}
+EFFORTS: dict[str, list[str]] = {"claude_code": ["low", "medium", "high", "xhigh", "max"],
+                                 "codex": ["minimal", "low", "medium", "high", "xhigh"]}
 
 # What `model` may be set to, per adapter, for the Agents page's picker. Claude Code and Codex publish aliases and
 # ids but no way to list them; the three CLIs in MODEL_LIST_ARGS print their own list (`<id> …` per line), which the

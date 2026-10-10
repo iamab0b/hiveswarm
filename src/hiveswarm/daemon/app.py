@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import advisor, db, directives, memory, overlaps, perf, rulesets, sessions, worktree
+from .. import advisor, db, directives, memory, overlaps, perf, profiles, rulesets, sessions, worktree
 from .. import projects as projects_mod
 from ..config import env_secret, load, load_current
 from . import dispatcher
@@ -49,6 +49,7 @@ class Register(BaseModel):
     model: str | None = None
     effort: str | None = None
     configured: int | None = None  # lanes the worker's own worker.toml asks for (`concurrency`)
+    profile: str | None = None     # the profile that wrote this agent's table, when one did
 
 
 class CapacityIn(BaseModel):
@@ -309,7 +310,7 @@ def agents() -> list[dict[str, Any]]:
 
 @app.post("/register", dependencies=[Depends(_auth)])
 def register(r: Register) -> dict[str, Any]:
-    row = db.agent_register(r.agent_id, r.host, r.capabilities, r.capacity, r.provider, r.model, r.effort, r.configured)
+    row = db.agent_register(r.agent_id, r.host, r.capabilities, r.capacity, r.provider, r.model, r.effort, r.configured, r.profile)
     return {"ok": True, "desired_capacity": row["desired_capacity"] if row else None}
 
 
@@ -436,12 +437,15 @@ def projects() -> dict[str, Any]:
     out = projects_mod.listing()
     cfg = load_current()
     counts = db.deferred_counts()
+    tasks = db.task_counts_by_project()
     paused = advisor.paused_projects()
     for name, p in out.items():
         rs = rulesets.resolve(cfg, name)
         p["ruleset"] = rulesets.label(rs["name"], rs["intensity"])
         p["deferred_open"] = counts.get(name, 0)
         p["paused"] = name in paused
+        p["profile"] = p.get("profile") or None
+        p["started"] = tasks.get(name, 0) > 0
     return out
 
 
@@ -449,6 +453,8 @@ class ProjectSettings(BaseModel):
     agents: list[str] | None = None          # the roster: only these agents get the project's work; [] or null clears it
     ruleset: str | None = None               # "craft" | "off"
     ruleset_intensity: str | None = None     # "standard" | "strict"
+    profile: str | None = None               # the profile the project runs on; "" for none; fixed once the project has a task
+    lanes: dict[str, int] | None = None      # per-project lane counts for the profile's coders, by agent id; {} clears them
 
 
 @app.get("/projects/{name}/settings", dependencies=[Depends(_auth)])
@@ -458,20 +464,55 @@ def project_settings_get(name: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="no such project")
     p = cfg.project(name)
     rs = rulesets.resolve(cfg, name)
+    n = profiles.task_count(name)
     return {"name": name, "agents": list(p.get("agents") or []), "ruleset": rs["name"], "ruleset_intensity": rs["intensity"],
-            "ruleset_set": "ruleset" in p or "ruleset_intensity" in p}
+            "ruleset_set": "ruleset" in p or "ruleset_intensity" in p,
+            "profile": p.get("profile") or None, "lanes": dict(p.get("lanes") or {}), "started": n > 0, "task_count": n}
 
 
 @app.post("/projects/{name}/settings", dependencies=[Depends(_auth)])
 def project_settings_set(name: str, body: ProjectSettings) -> dict[str, Any]:
-    """Edit a project's section in config.toml: its roster (which agents may take its work) and its ruleset."""
+    """Edit a project's section in config.toml: its profile (fixed once the project has started; lane counts stay
+    editable), its roster (which agents may take its work when it has no profile) and its ruleset."""
     from .. import tomledit
     from ..config import config_path
     cfg = load_current()
     if name not in (cfg.raw.get("projects") or {}):
         raise HTTPException(status_code=404, detail="no such project")
+    p = cfg.project(name)
     updates: dict[str, Any] = {}
+    pname = p.get("profile") or None
+    if body.profile is not None:
+        new = body.profile.strip() or None
+        if new != pname:
+            n = profiles.task_count(name)
+            if n:
+                raise HTTPException(status_code=409, detail=f"{name} has started ({n} task{'s' if n != 1 else ''}); its profile "
+                                                            f"stays {pname or 'any agent'}. Lane counts can still change.")
+            if new and new not in profiles.listing(cfg):
+                raise HTTPException(status_code=400, detail=f"no profile named {new}")
+            updates["profile"] = new
+            updates["lanes"] = None
+            if new:
+                updates["agents"] = None
+            pname = new
+    if body.lanes is not None:
+        if not pname:
+            raise HTTPException(status_code=400, detail=f"{name} has no profile; lane counts belong to a profile's coders")
+        r = profiles.for_project(cfg, name) if pname == p.get("profile") else None
+        valid = {c["agent_id"] for c in (r or {}).get("coders") or [] if not c["hub"]}
+        if r is None:
+            prof = profiles.get(cfg, pname) or {}
+            valid = {profiles.coder_id(pname, k) for k, c in (prof.get("coders") or {}).items() if c["adapter"] not in profiles.HUB_ADAPTERS}
+        lanes: dict[str, int] = {}
+        for aid, n in body.lanes.items():
+            if aid not in valid:
+                raise HTTPException(status_code=400, detail=f"{aid} is not a coder of profile {pname}")
+            lanes[aid] = max(0, min(profiles.MAX_COUNT, int(n)))
+        updates["lanes"] = lanes or None
     if body.agents is not None:
+        if pname and body.agents:
+            raise HTTPException(status_code=400, detail=f"{name} runs on profile {pname}; its agents come from the profile")
         updates["agents"] = [a for a in body.agents if a] or None
     if body.ruleset is not None:
         if body.ruleset not in ("craft", "off"):
@@ -491,6 +532,93 @@ def project_settings_set(name: str, body: ProjectSettings) -> dict[str, Any]:
 def project_ruleset(name: str) -> dict[str, Any]:
     """The ruleset a project's agents work under, with the text that is put in their prompts."""
     return rulesets.resolve(load_current(), name)
+
+
+@app.get("/projects/{name}/profile", dependencies=[Depends(_auth)])
+def project_profile(name: str) -> dict[str, Any]:
+    """The project's profile resolved to agent ids and effective lane counts, with each agent's live row."""
+    cfg = load_current()
+    if name not in (cfg.raw.get("projects") or {}):
+        raise HTTPException(status_code=404, detail="no such project")
+    r = profiles.for_project(cfg, name)
+    n = profiles.task_count(name)
+    live = {a["agent_id"]: a for a in agents()}
+    if r and not r.get("error"):
+        r["lead"]["live"] = live.get(r["lead"]["agent_id"])
+        for c in r["coders"]:
+            c["live"] = live.get(c["agent_id"])
+    return {"project": name, "profile": r["name"] if r else None, "started": n > 0, "task_count": n, "locked": n > 0, "resolved": r}
+
+
+# ── profiles: which models lead, chat and code, saved in config.toml ──
+
+class ProfileIn(BaseModel):
+    name: str
+    note: str | None = None
+    lead: dict[str, Any] = {}
+    chat: dict[str, Any] = {}
+    coders: list[dict[str, Any]] = []
+
+
+def _profile_view(cfg: Any, name: str, p: dict[str, Any]) -> dict[str, Any]:
+    used = profiles.users(cfg, name)
+    coders = []
+    for key, c in (p.get("coders") or {}).items():
+        hub = c["adapter"] in profiles.HUB_ADAPTERS
+        coders.append({"key": key, "agent_id": c["adapter"] if hub else profiles.coder_id(name, key), "hub": hub, **c})
+    return {"name": name, "note": p.get("note") or "", "error": p.get("error"),
+            "lead": {"agent_id": profiles.lead_id(name), **p["lead"]} if p.get("lead") else None,
+            "chat": p.get("chat") or None, "coders": coders,
+            "used_by": used, "locked": any(u["started"] for u in used)}
+
+
+@app.get("/profiles", dependencies=[Depends(_auth)])
+def profiles_list() -> dict[str, Any]:
+    cfg = load_current()
+    return {"profiles": [_profile_view(cfg, n, p) for n, p in profiles.listing(cfg).items()]}
+
+
+@app.get("/profiles/wanted", dependencies=[Depends(_auth)])
+def profiles_wanted() -> dict[str, Any]:
+    """The `[agents.*]` tables the profiled projects need on the machine running the app; `ui_server.materialize`
+    writes them into that machine's worker.toml."""
+    return {"tables": profiles.wanted(load_current())}
+
+
+@app.post("/profiles", dependencies=[Depends(_auth)])
+def profile_set(b: ProfileIn) -> dict[str, Any]:
+    """Create or replace a profile. One a started project runs on can only change its note."""
+    from .. import tomledit
+    from ..config import config_path
+    cfg = load_current()
+    try:
+        new = profiles.normalize(b.name, {"note": b.note, "lead": b.lead, "chat": b.chat, "coders": b.coders})
+    except profiles.ProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    current = profiles.get(cfg, b.name)
+    if current and not current.get("error") and not profiles.roles_equal(current, new):
+        started = [u["project"] for u in profiles.users(cfg, b.name) if u["started"]]
+        if started:
+            raise HTTPException(status_code=409, detail=f"{b.name} is the profile of {', '.join(started)}, which started; "
+                                                        "save a different setup under a new name")
+    tomledit.write_section(config_path(), f"profiles.{b.name}", new)
+    load.cache_clear()
+    return _profile_view(load_current(), b.name, new)
+
+
+@app.delete("/profiles/{name}", dependencies=[Depends(_auth)])
+def profile_delete(name: str) -> dict[str, Any]:
+    from .. import tomledit
+    from ..config import config_path
+    cfg = load_current()
+    if name not in profiles.listing(cfg):
+        raise HTTPException(status_code=404, detail="no such profile")
+    used = [u["project"] for u in profiles.users(cfg, name)]
+    if used:
+        raise HTTPException(status_code=409, detail=f"{name} is the profile of {', '.join(used)}")
+    tomledit.write_section(config_path(), f"profiles.{name}", None)
+    load.cache_clear()
+    return {"ok": True, "name": name}
 
 
 @app.get("/projects/{name}/deferred", dependencies=[Depends(_auth)])
@@ -785,10 +913,14 @@ def session_add(sa: SessionAdd) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="repo_path required (or configure projects.<name>.repo_path)")
     if sa.permission_mode not in sessions.PERMISSION_MODES:
         raise HTTPException(status_code=400, detail=f"permission_mode must be one of {sessions.PERMISSION_MODES}")
+    agent = sa.agent
+    pcfg = load_current()
+    if sa.agent not in profiles.agent_ids(pcfg, sa.project):
+        agent = profiles.lead_agent(pcfg, sa.project) or sa.agent  # a profiled project's sessions run on its lead agent
     ids = []
     for i in range(max(1, min(sa.count, 12))):
         name = sa.name if (sa.name and sa.count == 1) else None
-        ids.append(sessions.create(sa.project, sa.spec, sa.acceptance, repo, sa.base_ref, sa.agent, sa.permission_mode, name,
+        ids.append(sessions.create(sa.project, sa.spec, sa.acceptance, repo, sa.base_ref, agent, sa.permission_mode, name,
                                    lead=sa.lead, origin=sa.origin, persistent=sa.persistent and sa.lead))
     return {"ids": ids, "id": ids[0], "state": "pending"}
 
@@ -841,7 +973,8 @@ def lead_get_or_create(b: LeadIn) -> dict[str, Any]:
                 db.log_append(existing["id"], "daemon", f"you (queued until the lead starts): {first}")
         return {"id": existing["id"], "created": False, "state": existing["state"]}
     spec = (b.message or "").strip() or "Standing by for the human's first request."
-    tid = sessions.create(b.project, spec, None, repo, "HEAD", "claude_code", b.permission_mode,
+    agent = profiles.lead_agent(load_current(), b.project) or "claude_code"
+    tid = sessions.create(b.project, spec, None, repo, "HEAD", agent, b.permission_mode,
                           name=f"lead-{b.project}"[:40], lead=True, origin="app", persistent=True)
     return {"id": tid, "created": True, "state": "pending"}
 
@@ -876,6 +1009,9 @@ async def session_commands(request: Request, host: str, wait: float = 0, advisor
             plan = advisor.plan_get(t["project"])
             learned = memory.prompt_block(memory.recall(t["text"], t["project"], 6)) if memory.enabled() else ""
             t["system_prompt"] = advisor.system_prompt(t["project"], plan["text"] if plan else None, advisor.paused(t["project"]), learned)
+            prof = profiles.for_project(load_current(), t["project"])
+            if prof and prof.get("chat"):
+                t["model"], t["effort"] = prof["chat"].get("model"), prof["chat"].get("effort")
         if cmds or turns or _time.time() >= deadline:
             return {"commands": cmds, "advisor": turns}
         await asyncio.sleep(0.5)
