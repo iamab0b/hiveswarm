@@ -7,6 +7,7 @@ All notable changes to Hiveswarm. The format follows [Keep a Changelog](https://
 ## [0.3.1] — 2026-10-09
 
 ### Fixed
+- Two processes opening a brand-new database at the same moment (the daemon and the decide service on a first start, every CI run) could fail with "database is locked" or "duplicate column name": switching a fresh file to WAL is retried, and one process at a time migrates, under a lock file next to the database.
 - After an engine upgrade the app kept showing the previous version's page until someone pressed reload (the browser, and the desktop window, were allowed to keep `index.html`). The app server now serves `index.html` with `Cache-Control: no-cache` (the hashed files under `assets/` stay cacheable for good), the page reloads itself once when the engine reports a version other than its own and otherwise offers a reload, and the desktop app clears the window's cache before loading the engine's page.
 
 ## [0.3.0] — 2026-10-09

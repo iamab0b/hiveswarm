@@ -24,16 +24,28 @@ def new_id() -> str:
 
 
 def _connect() -> sqlite3.Connection:
+    """Open the database. Switching a brand-new file to WAL needs an exclusive lock that SQLite's busy handler does
+    not wait for, so when two processes open a fresh database at the same moment (the daemon and the decide service
+    on first start, every test session) one of them gets "database is locked" at once; retry that for a while."""
+    import time as _time
     cfg = load()
     path = cfg.get("paths.db")
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=30, isolation_level=None, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+    deadline = _time.monotonic() + 15
+    while True:
+        conn = sqlite3.connect(path, timeout=30, isolation_level=None, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=30000")
+            return conn
+        except sqlite3.OperationalError as e:
+            conn.close()
+            if "locked" not in str(e).lower() or _time.monotonic() >= deadline:
+                raise
+            _time.sleep(0.05)
 
 
 def conn() -> sqlite3.Connection:
@@ -55,14 +67,38 @@ _COLUMNS = {
 
 
 def migrate() -> None:
+    """Create the schema and add the columns later versions introduced. The daemon and the decide service both do
+    this when they start, often at the same moment on a fresh database, so one process at a time holds a lock
+    file next to the database while it migrates, and a column another process just added is not an error."""
+    import contextlib
     sql = _SCHEMA.read_text()
     c = conn()
-    c.executescript(sql)
-    for table, cols in _COLUMNS.items():
-        have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
-        for name, decl in cols:
-            if name not in have:
-                c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    with _migrate_lock():
+        c.executescript(sql)
+        for table, cols in _COLUMNS.items():
+            have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+            for name, decl in cols:
+                if name not in have:
+                    with contextlib.suppress(sqlite3.OperationalError):
+                        c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
+@contextmanager
+def _migrate_lock() -> Iterator[None]:
+    """An exclusive lock on `<db>.migrate.lock` for the duration of a migration; a no-op where file locks are not
+    available."""
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+    path = Path(load().get("paths.db")).with_suffix(".migrate.lock")
+    with open(path, "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 @contextmanager
