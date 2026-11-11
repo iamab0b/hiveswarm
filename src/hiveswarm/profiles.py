@@ -1,7 +1,8 @@
-"""Profiles: a named set of models for the three roles of a project's swarm, saved in the hub's config.toml.
+"""Profiles: a named set of models for a project's swarm, saved in the hub's config.toml.
 
-A profile says which model leads (the goal session), which one chats (the advisor), and which coders take the
-tasks, each with a count of lanes:
+A profile says which model leads (the goal session) and which coders take the tasks, each with a count of lanes.
+The chat agent is not part of a profile: it exists before any project does, so its model is one setting for the
+whole app (`[chat]` in config.toml). A `chat` table left in a profile by 0.3 is read without complaint and ignored.
 
     [profiles.deep]
     note = "Opus leads, two Opus medium lanes, Codex for tests"
@@ -10,9 +11,6 @@ tasks, each with a count of lanes:
     adapter = "claude_code"
     model = "opus"
     effort = "max"
-
-    [profiles.deep.chat]
-    model = "sonnet"
 
     [profiles.deep.coders.claude-opus-medium]
     adapter = "claude_code"
@@ -97,7 +95,6 @@ def normalize(name: str, body: dict[str, Any]) -> dict[str, Any]:
     lead = _role(body.get("lead") or {}, "lead", adapters.ADAPTERS, adapters.EFFORTS, adapters.EFFORT_FLAGS)
     if lead["adapter"] in HUB_ADAPTERS:
         raise ProfileError("lead: a hub lane cannot run the goal session; pick a CLI agent")
-    chat = _role(body.get("chat") or {}, "chat", adapters.ADAPTERS, adapters.EFFORTS, adapters.EFFORT_FLAGS, fixed_adapter="claude_code")
     raw_coders = body.get("coders") or {}
     items: list[Any] = list(raw_coders.values()) if isinstance(raw_coders, dict) else list(raw_coders) if isinstance(raw_coders, list) else []
     coders: dict[str, dict[str, Any]] = {}
@@ -119,7 +116,7 @@ def normalize(name: str, body: dict[str, Any]) -> dict[str, Any]:
     if not coders:
         raise ProfileError("a profile needs at least one coder")
     note = str(body.get("note") or "").strip()[:200]
-    out: dict[str, Any] = {"lead": lead, "chat": chat, "coders": coders}
+    out: dict[str, Any] = {"lead": lead, "coders": coders}
     if note:
         out["note"] = note
     return out
@@ -127,7 +124,7 @@ def normalize(name: str, body: dict[str, Any]) -> dict[str, Any]:
 
 def roles_equal(a: dict[str, Any], b: dict[str, Any]) -> bool:
     """Whether two canonical profiles run the same thing (the note aside)."""
-    return a.get("lead") == b.get("lead") and a.get("chat") == b.get("chat") and a.get("coders") == b.get("coders")
+    return a.get("lead") == b.get("lead") and a.get("coders") == b.get("coders")
 
 
 # ── reading what is on file ─────────────────────────────────────────────
@@ -139,7 +136,7 @@ def listing(cfg: Config) -> dict[str, dict[str, Any]]:
         try:
             out[name] = normalize(name, raw if isinstance(raw, dict) else {})
         except ProfileError as e:
-            out[name] = {"lead": {}, "chat": {}, "coders": {}, "error": str(e)}
+            out[name] = {"lead": {}, "coders": {}, "error": str(e)}
     return out
 
 
@@ -157,12 +154,13 @@ def users(cfg: Config, name: str) -> list[dict[str, Any]]:
 
 
 def started(project: str) -> bool:
-    """A project has started once it has a task (a goal session counts); from then on its profile is fixed."""
-    return db.one("SELECT 1 FROM tasks WHERE project = ? LIMIT 1", project) is not None
+    """A project has started once it has a task (a goal session counts, its chat agent does not); from then on
+    its profile is fixed."""
+    return db.one(f"SELECT 1 FROM tasks WHERE project = ? AND {db.NOT_CHAT} LIMIT 1", project) is not None
 
 
 def task_count(project: str) -> int:
-    r = db.one("SELECT COUNT(*) AS n FROM tasks WHERE project = ?", project)
+    r = db.one(f"SELECT COUNT(*) AS n FROM tasks WHERE project = ? AND {db.NOT_CHAT}", project)
     return int(r["n"]) if r else 0
 
 
@@ -174,9 +172,9 @@ def for_project(cfg: Config, project: str) -> dict[str, Any] | None:
         return None
     prof = get(cfg, name)
     if prof is None:
-        return {"name": name, "error": f"no profile named {name} in config.toml", "lead": None, "chat": None, "coders": []}
+        return {"name": name, "error": f"no profile named {name} in config.toml", "lead": None, "coders": []}
     if prof.get("error"):
-        return {"name": name, "error": prof["error"], "lead": None, "chat": None, "coders": []}
+        return {"name": name, "error": prof["error"], "lead": None, "coders": []}
     overrides = p.get("lanes") or {}
     coders = []
     for key, c in prof["coders"].items():
@@ -192,7 +190,6 @@ def for_project(cfg: Config, project: str) -> dict[str, Any] | None:
                        "count": count, "default_count": c["count"], "hub": hub})
     return {"name": name, "note": prof.get("note") or "",
             "lead": {"agent_id": lead_id(name), **prof["lead"]},
-            "chat": dict(prof["chat"]),
             "coders": coders}
 
 
@@ -246,7 +243,7 @@ def wanted(cfg: Config) -> dict[str, dict[str, Any]]:
 
 
 def describe(r: dict[str, Any]) -> str:
-    """One line for logs and the CLI: `deep: lead claude opus max · chat sonnet · claude opus medium ×2, codex ×1`."""
+    """One line for logs and the CLI: `deep: lead claude opus max · claude opus medium ×2, codex ×1`."""
     def role(x: dict[str, Any] | None) -> str:
         if not x:
             return "?"
@@ -254,4 +251,22 @@ def describe(r: dict[str, Any]) -> str:
     if r.get("error"):
         return f"{r.get('name')}: {r['error']}"
     coders = ", ".join(f"{role(c)} ×{c['count']}" for c in r.get("coders") or [])
-    return f"{r['name']}: lead {role(r.get('lead'))} · chat {role(r.get('chat'))} · {coders}"
+    return f"{r['name']}: lead {role(r.get('lead'))} · {coders}"
+
+
+def chat_role(cfg: Config) -> dict[str, Any]:
+    """The chat agent's model and effort: `[chat]` in config.toml, validated like a profile role (Claude Code only)."""
+    from .workers import adapters
+    raw = cfg.raw.get("chat") or {}
+    try:
+        r = _role({"model": raw.get("model"), "effort": raw.get("effort")}, "chat", adapters.ADAPTERS, adapters.EFFORTS,
+                  adapters.EFFORT_FLAGS, fixed_adapter="claude_code")
+    except ProfileError as e:
+        return {"adapter": "claude_code", "model": None, "effort": None, "error": str(e)}
+    return r
+
+
+def default_profile(cfg: Config) -> str | None:
+    """The profile a project started from the chat agent gets when none is named (`[defaults] profile`)."""
+    name = str((cfg.raw.get("defaults") or {}).get("profile") or "").strip()
+    return name if name and name in (cfg.raw.get("profiles") or {}) else None

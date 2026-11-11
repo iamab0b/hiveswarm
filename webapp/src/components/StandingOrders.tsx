@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Directive } from "@/lib/types";
 import { age, cn, short } from "@/lib/utils";
 import { Button } from "./ui/button";
+import { TaskLink } from "./bits";
 import { Input, Label, Switch, Textarea, Tip } from "./ui/fields";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "./ui/dialog";
 import { act } from "./actions";
@@ -47,7 +47,7 @@ export function DirectiveRow({ d, currentTask, onRemoved }: { d: Directive; curr
         <Tip label="Retire this standing order"><Button size="icon-sm" variant="ghost" className="-mr-1 -mt-1 opacity-0 group-hover:opacity-100" onClick={async () => { await act.removeDirective(d.id); onRemoved?.(); }}><X className="h-3.5 w-3.5" /></Button></Tip>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-meta">
-        {!d.task_id ? <span>whole project</span> : d.task_id === currentTask ? <span>this lane</span> : <Link to={`/t/${d.task_id}`} className="mono hover:text-fg hover:underline">lane {short(d.task_id)}</Link>}
+        {!d.task_id ? <span>whole project</span> : d.task_id === currentTask ? <span>this lane</span> : <TaskLink id={d.task_id} className="mono text-[11px] text-dim hover:text-fg hover:underline">lane {short(d.task_id)}</TaskLink>}
         <span>· every {d.every_tools} tools / {d.every_minutes} min</span>
         <span>· reminded {d.fires}×</span>
         {d.check ? <span className={cn(c.tone === "bad" && "text-accent", c.tone === "good" && "text-success")}>· last audit{!d.task_id ? " (any lane)" : ""}: {c.label}</span> : <span>· no audit</span>}

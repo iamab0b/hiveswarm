@@ -1,8 +1,8 @@
 # Hiveswarm Desktop
 
-The desktop app is Hiveswarm in its own window. It starts the engine for you, keeps it running while the app is open (or sits in the tray), and stops it when you quit. There is nothing to type and no browser tab to keep open.
+The desktop app is Hiveswarm in its own window. It starts the engine for you, keeps it running while the app is open (or sits in the tray), and stops it when you quit. There is nothing to type and no browser tab to keep open. The window opens on one terminal, a fresh chat agent; [terminals.md](terminals.md) describes what you see from there.
 
-![The swarm in the desktop window](screenshots/41-desktop-app.png)
+The window is a terminal first, so on Windows and Linux it has no menu: <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>R</kbd> and every other key reach the agent you are typing to. <kbd>F5</kbd> reloads the page and <kbd>F12</kbd> opens the developer tools.
 
 ## Install
 

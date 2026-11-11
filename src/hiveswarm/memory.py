@@ -8,7 +8,7 @@ Three backends, chosen by `[memory] backend`:
   REST API, one bank per scope, so recall is semantic and the server can reflect over everything it has.
 
 Two scopes: a project's own memories and `global` (every project). The daemon retains a lesson when an attempt
-fails (what was tried, what the verifier said) and a short note when work lands; the lead and the advisor can
+fails (what was tried, what the verifier said) and a short note when work lands; the lead and the chat agent can
 remember and recall explicitly (hm_remember / hm_recall); recall for the lead's goal goes into its prompt.
 """
 from __future__ import annotations

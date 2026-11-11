@@ -4,6 +4,7 @@ How the app looks and behaves, in enough detail that a person or an agent can ad
 
 ## Principles
 
+0. **The app is a terminal.** What you see first, and most of the time, is real terminals: the chat agent, the lead, the agents. The chrome around them is one 40 px header and one 28 px title line per tile; everything that is not a terminal lives on the other tab.
 1. **Calm by default, loud only when you are needed.** The app watches agents for hours. Everything that does not need a decision from you is neutral; the one thing that does gets the single accent colour. Nothing glows, pulses or tints a whole card.
 2. **One accent, three signals.** Honey (`--accent`) marks *needs you* and the primary action. Green means finished and verified, red means failed or destructive. There is no fourth colour: "running", "queued", "working" and "idle" are text next to a neutral dot.
 3. **Agents are names, not colours.** An agent is identified by its name in a neutral chip; a 6 px hue dot helps scanning in dense lists and tells chart series apart, never a border, a background or a heading colour.
@@ -61,7 +62,7 @@ Primitives live in `webapp/src/components/ui/` and follow shadcn's conventions (
 
 | component | file | notes |
 |---|---|---|
-| `Button` | `ui/button.tsx` | `primary` (inverted fg/bg, one per view), `accent` (only "New goal" and attention actions), `secondary` (bordered), `ghost`, `destructive` (red text; red fill only inside a confirm dialog), `link`. Sizes `xs sm md lg icon icon-sm`. Optional `kbd` hint. |
+| `Button` | `ui/button.tsx` | `primary` (inverted fg/bg, one per view), `accent` (attention actions only), `secondary` (bordered), `ghost`, `destructive` (red text; red fill only inside a confirm dialog), `link`. Sizes `xs sm md lg icon icon-sm icon-xs`. Optional `kbd` hint. |
 | `Badge` / `StateBadge` | `ui/badge.tsx` | A dot plus a word. `StateBadge` maps a task state to one of four dots: accent (needs you), success, danger, neutral. No filled pills. |
 | `Card`, `CardHeader`, `CardTitle`, `CardSection` | `ui/card.tsx` | A bordered `surface` block. `CardHeader` is a 36 px row with a title and actions. |
 | `Input`, `Textarea`, `Select`, `Switch`, `Segmented`, `Tabs`, `Tip`, `Kbd`, `Label` | `ui/fields.tsx` | Inputs are `surface-2` with a hairline; focus shows a 2 px accent ring. |
@@ -70,18 +71,23 @@ Primitives live in `webapp/src/components/ui/` and follow shadcn's conventions (
 | `PageHeader` | `bits.tsx` | Title, optional count, optional subtitle, actions on the right. No icon in the title. |
 | `AgentChip` | `bits.tsx` | Neutral chip: hue dot + name. `lead` adds a crown glyph; `session` a terminal glyph. |
 | `AttentionPanel` | `Attention.tsx` | The one loud element: `surface-2` panel, 2 px left rule in accent (red for a high-risk approval), a label (*Needs approval*, *Asks you*, *Waiting for you* …), the text, then actions. Options render as numbered secondary buttons; free text as a single input plus button. |
-| `EventLine` / `EventStream` | `EventStream.tsx` | Log lines: time in `dim`, a glyph column, mono body. Only *you*, *failed* and *done* lines carry colour. |
+| `EventLine` / `EventStream` | `EventStream.tsx` | Log lines: time in `dim`, a glyph column, mono body. Only *you*, *failed* and *done* lines carry colour. `dense quiet` inside a tile. |
+| `Terminal` | `Terminal.tsx` | xterm.js on an agent's tmux window. `attach` is the real terminal; `mini` draws the agent's screen at its own size, scaled to the tile, read-only. The terminal's own colours are the only place the palette is not the tokens. |
+| `Tile` | `Tile.tsx` | One agent in a workspace: a 28 px title line (role word, agent chip, model, title, state, then zoom / details / stop as ghost icon buttons), the attention panel when it needs you, then its terminal or its stream. Focus is `surface-2` on the title line and brighter text, never a coloured border. |
+| `Workspace` | `Workspace.tsx` | Chat, lead and agents as columns separated by hairlines that drag; the agents stack by weight (a terminal 3, headless 1.4, ×1.7 when it needs you), in two columns past four, the quietest as title lines past eight. Finished work is a 32 px strip of chips. |
+| `DetailOverlay` | `Detail.tsx` | A task's or agent's record over the workspace: tabs for overview, events, diff, standing orders; its actions in the header. Opened with `openDetail(id)`, never a route. |
 | `Chart` helpers | `ui/chart.tsx` | recharts with the tokens applied: hairline grid, no gradients, series in `--chart-1…4`, tooltip on `surface` with a border. |
 
 ## Patterns
 
-- **Page layout.** A page is `PageHeader` + content inside `mx-auto max-w-* px-6 py-5`. Full-height pages (Lead, Session, Hive) use a 44 px toolbar row and fill the rest.
+- **Two tabs.** Terminals is a workspace filling the window: no page header, no padding, tiles edge to edge with hairlines between them. Control is one scrolling page, `mx-auto max-w-[1200px] px-6 py-5`, of sections with a `text-label` title in `fg` and one line of `muted` explanation, 40 px apart.
+- **Workspaces are switched by key or from Control.** The header never offers a workspace as a button or a tab; it names the one you are in and, in accent, any other that is waiting for you, with its key. All app keys are Ctrl+Shift+something so a terminal keeps every key it needs.
+- **Tiles.** The title line identifies (role, agent, what it is doing) and stays one line at any width: as a tile narrows, the step timer, the model and finally the chip give way (container queries on the tile), the title truncates, the state and the buttons stay. A tile that needs you shows the attention panel under its title line and grows; that panel is the only accent in a workspace. An agent sitting at its own prompt is *idle*, not *needs you*.
+- **Placeholders.** Where a tile is not there yet (the chat agent is starting, no lead is running), the same space holds a centred title, one `muted` sentence and at most one button.
 - **Lists.** Rows of 36 px with a hairline between them inside one card; hover is `surface-2`; the first column is what identifies the row, the last column is time or an action. Tables use the same rows with a `text-label` header and tabular numbers right-aligned.
-- **Cards for live work.** The Swarm shows one card per lane: a 36 px header (agent chip, id, state dot, elapsed), the task's first line, then either the attention panel or the last three log lines, then a 32 px footer with ghost actions. The card border never changes colour.
-- **Chat (Lead and Advisor).** A document, not bubbles: each turn is a `text-label` speaker on the left and markdown on the right, in a 720 px column. Tool calls collapse to one mono line (`▸ 3 tool calls · hm_status, hm_advise`) that expands to the calls and their results. Questions from the agent render as an attention panel inline. The composer is a textarea with the send button inside its bottom-right corner; the hint line under it is `text-meta`.
 - **Stats.** Numbers first (a row of `Stat` blocks), then a chart, then the table. Charts answer one question each and have a one-line caption.
 - **Dialogs.** Title, one line of description, fields with `Label`s, footer with *Cancel* (ghost) and one primary. Destructive confirmations use the `destructive` button and name the thing being destroyed in the title.
-- **Keyboard.** Every list and panel action with a key shows it as a `Kbd` after the label; the `?` dialog lists them all.
+- **Keyboard.** The header carries a muted legend of the workspace keys; the `?` dialog lists them all. Inside a terminal every other key belongs to the agent.
 - **Empty states.** Centred, a title in body size and one sentence in `muted` saying what will appear and what to do; no illustration.
 - **Theming.** Both themes come from the same tokens; the toggle is in the header. Screenshots in the docs are taken dark.
 
@@ -97,4 +103,4 @@ Primitives live in `webapp/src/components/ui/` and follow shadcn's conventions (
 
 ## Checking a change
 
-`npm run build` must pass (`tsc -b` is part of it). `python tests/screenshots.py` regenerates `docs/screenshots/`; look at them. `pytest -m e2e` renders every page in Chromium and fails on console errors. The before/after of the first pass that introduced this document is under `docs/screenshots/before/`.
+`npm run build` must pass (`tsc -b` is part of it). `python tests/screenshots.py` regenerates `docs/screenshots/`; look at them. `pytest -m e2e` drives both tabs in Chromium (the chat agent starting a project, tiles, focus, zoom, the Control sections) and fails on console errors. The before/after of the first pass that introduced this document is under `docs/screenshots/before/`.

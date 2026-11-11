@@ -4,6 +4,36 @@ All notable changes to Hiveswarm. The format follows [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-11
+
+The app is terminals. It opens on one terminal, a chat agent; a project is a workspace of tiles (chat agent, lead, and every agent the lead spawned); everything else is one Control tab. Upgrading: install the 0.4.0 wheel on the hub and let the desktop app upgrade the laptop (or `uv tool install --force` the wheel there). The database and both config files need no change. A 0.3 worker keeps working against a 0.4 hub for tasks and sessions, but only a 0.4 worker runs chat agents, so upgrade the machine the app runs on.
+
+### Added
+- **The chat agent** ([docs/chat.md](docs/chat.md)). A real Claude Code session with the `hiveswarm` MCP server in a new chat role (read-only views, the plan, pause/resume, briefs, memory, and two tools of its own). The app opens on a fresh one at Home, bound to no project; if you only chat, nothing is kept and the next launch gets a fresh one. Paste a brief and it calls `hm_start_project`: the hub creates the project, gives it a profile, moves that same chat session with its conversation into the project and starts the project's lead with the brief. In a project it is your interface to the lead: it explains what is going on from the tools, and when the idea or the steps change it pauses the project and hands the lead a brief. A project's chat agent reopens with its conversation; `hm_start_lead` starts or wakes a lead.
+- **Workspaces of tiles** ([docs/terminals.md](docs/terminals.md)). One per project: the chat agent, the lead beside it, and a tile per agent the lead spawned, each new one splitting the space again. Splits are weighted: the chat agent and the lead share most of the window, an agent in its own terminal gets a full tile, headless work a small one that streams its output, and a tile that needs you grows and shows the approval or question as a panel. A terminal too small to work in becomes a live miniature of the agent's screen (it never resizes the agent's own terminal); past eight tiles the agents' column becomes two and the quietest shrink to their title line; finished work becomes chips in a strip that open its record. Dividers drag and the dragged size is kept per project; any tile zooms to the whole workspace.
+- **Keys.** A workspace is switched with a key or from the Control tab, nowhere else: `Ctrl+Shift+H` Home, `Ctrl+Shift+1…9` projects, `Ctrl+Shift+arrows` focus, `Ctrl+Shift+Z` zoom, `Ctrl+Shift+D` details, `Ctrl+Shift+P` Control. Every other key goes to the focused terminal: the chat agent's when a workspace opens, and once you type or click in a tile, one that appears later never takes the keyboard from you. The desktop app has no menu on Windows and Linux any more, so `Ctrl+W`, `Ctrl+R` and the rest reach the terminal (`F5` reloads, `F12` opens the developer tools).
+- **The Control tab.** Projects (with their keys, state, *open*, *settings* and *new project*), Subscriptions (the agent CLIs on this machine and whether each is signed in, from `GET /api/local/subscriptions`), Profiles (with the chat agent's model and a default profile), Agents, and Activity (stats, feed, history). A project's settings hold its profile and lanes or roster, its ruleset, plan, standing orders, deferred ledger and files.
+- **A default profile and a chat model** as app-wide settings: `[defaults] profile` and `[chat] model`, `effort` in the hub's `config.toml`, `GET/POST /settings`.
+- A worker that has tmux and serves Claude Code registers a **chat agent** by itself (`chat-<host>`; no table in `worker.toml`, `[chat] enabled = false` turns it off). The hub sizes its lanes: one per open chat agent plus a spare. It takes no tasks.
+- API: `POST /chats/home`, `POST /chats/project/<name>`, `GET /chats/<id>/prompt`, `POST /chats/<id>/start_project`. MCP: `hm_profiles`, and for the chat role `hm_start_project`, `hm_start_lead`. The terminal websocket has `?mode=mini`.
+
+### Changed
+- **Profiles are lead and coders.** The chat agent exists before any project does, so its model is one setting for the app, not part of a profile. A `chat` table left in a profile by 0.3 is read and ignored, and dropped the next time the profile is saved.
+- A project's chat agent does not start the project: its profile stays changeable until the first task or lead.
+- In a project on a profile, an agent the lead starts in its own terminal (`hm_new_session`) runs on one of the profile's coders: the one behind the CLI it named, else the one with the most free lanes. It used to be sent to the lead's own agent, whose single lane the lead is in, and never started.
+- A brief reaches a lead that sits at its prompt at once, typed into its terminal (before, only a lead inside `hm_wait` got it promptly).
+- A lead or a session on a profile's agent (`deep-lead`) is no longer watched by the screen monitor meant for CLIs without hooks, which could mark it as waiting for you after ten quiet seconds; approve and deny keys follow the CLI behind the agent id.
+- Errors from the daemon reach the model through the MCP server with their reason (the SDK had been reducing them to "Error executing tool").
+- The app keeps `worker.toml` in step with the profiles when it starts and every fifteen seconds (was thirty).
+- A lead or a chat agent that is closed and reopened within a second or two stays open. The lane still closing the last run could close the window of the new one; a session's runs now follow each other, and each closes only its own window.
+- A session whose command line is longer than tmux accepts (about 16 KB: a lead with a long brief, a chat agent whose project has a long plan) is started from a script that only its owner can read, instead of failing with `command too long`.
+- A terminal is fitted to its tile again once its renderer and its font have loaded. It used to keep the column count of its first measurement, which left a strip at the right of the terminal unused.
+
+### Removed
+- The Swarm, Lead, Inbox, Hive, Tasks and Stats pages and the New goal dialog. What they did is in a project's workspace and on the Control tab; old addresses redirect.
+- The single-letter keys of those pages (`g`, `y`, `d`, …) and the command palette. A plain key now always belongs to the terminal that has the focus; approvals and answers are the buttons on a tile's panel, or the agent's own prompt in its terminal.
+- The headless advisor (`/advisor/*`, its conversation on the hub, the *Advisor* pane). The chat agent replaces it; plans, pauses and briefs are unchanged, and `HIVESWARM_ROLE=advisor` still gives an MCP client the chat role without the two project tools.
+
 ## [0.3.1] — 2026-10-09
 
 ### Fixed
@@ -99,7 +129,8 @@ First public release, renamed from the private project "Hivemind" (the name was 
 - Project deletion with optional purge; local copies of every project on each worker.
 - The web app (React, xterm.js) with Swarm, Lead, Inbox, Hive, Tasks, Stats and Agents pages, PWA install and a light theme.
 
-[Unreleased]: https://github.com/iamab0b/hiveswarm/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/iamab0b/hiveswarm/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/iamab0b/hiveswarm/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/iamab0b/hiveswarm/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/iamab0b/hiveswarm/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/iamab0b/hiveswarm/compare/v0.2.0...v0.2.1

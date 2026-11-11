@@ -1,4 +1,4 @@
-"""Profiles: which models lead, chat and code for a project, saved on the hub, written into the worker.toml of the
+"""Profiles: which models lead and code for a project, saved on the hub, written into the worker.toml of the
 machine running the app, fixed once the project has started (lane counts aside)."""
 from __future__ import annotations
 
@@ -10,11 +10,10 @@ import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from conftest import make_repo  # noqa: E402
+from conftest import make_repo  # noqa: E402,F401
 
 DEEP = {"name": "deep", "note": "Opus leads, Opus medium codes, Codex tests",
         "lead": {"adapter": "claude_code", "model": "opus", "effort": "max"},
-        "chat": {"model": "sonnet", "effort": "low"},
         "coders": [{"adapter": "claude_code", "model": "opus", "effort": "medium", "count": 2},
                    {"adapter": "codex", "model": "gpt-5.5", "effort": "high", "count": 1}]}
 
@@ -33,11 +32,11 @@ def test_profile_normalizes_merges_and_refuses():
                                                                       {"adapter": "prime_agent", "count": 4}]})
     assert list(p["coders"]) == ["claude-opus-medium", "codex-gpt-5-5-high", "prime"]
     assert p["coders"]["claude-opus-medium"]["count"] == 3 and p["coders"]["prime"]["count"] == 1
-    assert p["chat"] == {"adapter": "claude_code", "model": "sonnet", "effort": "low"}
+    assert "chat" not in p, "the chat agent is not part of a profile"
+    assert "chat" not in profiles.normalize("old", {**DEEP, "chat": {"model": "sonnet", "effort": "low"}}), "a 0.3 chat table is ignored"
     assert profiles.lead_id("deep") == "deep-lead" and profiles.coder_id("deep", "codex-gpt-5-5-high") == "deep-codex-gpt-5-5-high"
     for bad, why in [({"coders": []}, "at least one coder"),
                      ({"lead": {"adapter": "prime_agent"}, "coders": [{"adapter": "codex"}]}, "hub lane"),
-                     ({"chat": {"adapter": "codex"}, "coders": [{"adapter": "codex"}]}, "only claude_code"),
                      ({"coders": [{"adapter": "codex", "effort": "max"}]}, "effort for codex"),
                      ({"coders": [{"adapter": "cursor", "effort": "high"}]}, "no effort setting"),
                      ({"coders": [{"adapter": "codex", "count": 99}]}, "between 1 and 32")]:
@@ -109,12 +108,14 @@ def test_profile_runs_a_project_and_locks_once_started(stack, app_server):
 
         lead_task = stack.post("/leads", {"project": "profiled"})
         assert stack.session(lead_task["id"])["agent"] == "deep-lead"
-        stack.post(f"/tasks/{lead_task['id']}/cancel")
+        spawned = [stack.post("/sessions", {"project": "profiled", "spec": "An agent in its own terminal", "agent": a, "origin": "lead"})["id"]
+                   for a in ("claude_code", "codex", "deep-lead", "deep-codex-gpt-5-5-high")]
+        assert [stack.session(t)["agent"] for t in spawned] == ["deep-claude-opus-medium", "deep-codex-gpt-5-5-high", "deep-claude-opus-medium", "deep-codex-gpt-5-5-high"], \
+            "an agent the lead starts in a terminal runs on a coder, never in the lead's own lane"
+        for t in [*spawned, lead_task["id"]]:
+            stack.post(f"/tasks/{t}/cancel")
 
-        stack.post("/advisor/profiled/talk", {"text": "hello"})
-        handed = stack.get("/sessions/commands", host="test-host", advisor_ok="true", wait=0)["advisor"]
-        assert handed and handed[0]["model"] == "sonnet" and handed[0]["effort"] == "low"
-        stack.post(f"/advisor/turns/{handed[0]['id']}/done", {"host": "test-host", "error": "test"})
+        assert stack.get("/sessions/commands", host="test-host", advisor_ok="true", wait=0)["advisor"] == [], "what a 0.3 worker still asks for"
     finally:
         stack.http.delete("/projects/profiled")
         http.post("/api/local/materialize")
@@ -126,12 +127,13 @@ def test_profile_runs_a_project_and_locks_once_started(stack, app_server):
 
 @pytest.mark.e2e
 def test_profile_from_the_app(stack, page):
-    """Make a profile on the Agents page, put a project on it from the New goal dialog, start its lead, change a
-    coder's lanes from the Lead page strip, and find the profile locked for that project."""
-    page.goto(page.base + "/agents", wait_until="load")
+    """Make a profile on the Control tab and make it the default, put a new project on it, start its lead, change a
+    coder's lanes from the project's settings, and find the profile locked for that project."""
+    page.goto(page.base + "/control", wait_until="load")
     page.locator("[data-new-profile]").click()
     editor = page.locator("[data-profile-editor]")
     editor.wait_for(timeout=10000)
+    assert editor.locator("[data-role-fields=chat]").count() == 0, "the chat agent is not part of a profile"
     editor.locator("[data-profile-name]").fill("ui")
     lead = editor.locator("[data-role-fields=lead]")
     lead.locator("[data-model] [role=combobox]").click()
@@ -147,60 +149,53 @@ def test_profile_from_the_app(stack, page):
     editor.locator("button", has_text="Create profile").click()
     card = page.locator("[data-profile-card=ui]")
     card.wait_for(timeout=10000)
-    assert "opus" in card.inner_text() and "×2" in card.inner_text()
+    assert "opus" in card.inner_text() and "×2" in card.inner_text() and "chat" not in card.inner_text().lower()
     prof = next(p for p in stack.get("/profiles")["profiles"] if p["name"] == "ui")
     assert prof["lead"]["model"] == "opus" and prof["lead"]["effort"] == "max"
     assert [(c["agent_id"], c["count"]) for c in prof["coders"]] == [("ui-claude", 1), ("ui-codex", 2)]
+    card.locator("[data-make-default=ui]").click()
+    stack.wait_for(lambda: stack.get("/settings")["default_profile"] == "ui", 10, "the default profile to be saved")
+    card.locator("[data-default-profile=ui]").wait_for(timeout=10000)
 
-    repo = make_repo(stack.home / "repos" / "uiprof")
-    stack.post("/projects", {"name": "uiprof", "repo_path": str(repo)})
     lead_task = None
     try:
-        page.goto(page.base + "/", wait_until="load")
-        page.wait_for_timeout(500)
-        page.keyboard.press("g")
-        dialog = page.locator("[role=dialog]")
+        page.locator("[data-new-project]").click()
+        dialog = page.locator("[data-new-project-dialog]")
         dialog.wait_for(timeout=10000)
-        dialog.locator("[role=combobox]").first.click()
-        page.get_by_role("option", name="uiprof", exact=True).click()
         picker = dialog.locator("[data-profile-picker]")
-        picker.wait_for(timeout=10000)
-        assert picker.get_attribute("data-locked") == "false"
-        picker.locator("[role=combobox]").click()
-        page.get_by_role("option", name="ui", exact=True).click()
-        stack.wait_for(lambda: stack.get("/projects/uiprof/settings")["profile"] == "ui", 10, "the profile to be saved on the project")
         picker.locator("[data-profile-card=ui]").wait_for(timeout=10000)
-        stack.wait_for(lambda: "ui-lead" in _tables(stack), 15, "the app to write the profile's tables")
+        assert "ui" in picker.locator("[role=combobox]").inner_text(), "a new project starts on the default profile"
+        dialog.locator("[data-project-name]").fill("uiprof")
+        dialog.locator("button", has_text="Create and open").click()
+        page.wait_for_url("**/p/uiprof", timeout=20000)
+        assert stack.get("/projects/uiprof/settings")["profile"] == "ui"
+        stack.wait_for(lambda: "ui-lead" in _tables(stack), 30, "the app to write the profile's tables")
         stack.wait_for(lambda: (_agent(stack, "ui-lead") or {}).get("alive"), 40, "the lead's lane to register")
+        assert not stack.get("/projects/uiprof/settings")["started"], "a chat agent in the workspace does not start the project"
 
-        dialog.locator("button", has_text="Lead").first.click()
-        assert "the lead of profile" in dialog.inner_text()
-        dialog.locator("textarea").fill("Say hello and stop.")
-        dialog.locator("button", has_text="Start the lead").click()
+        page.locator("[data-start-lead]").click()
         stack.wait_for(lambda: stack.get("/projects/uiprof/settings")["started"], 15, "the lead's task to exist")
-        lead_task = next(t for t in stack.get("/tasks", project="uiprof") if t["kind"] == "session")
+        lead_task = next(t for t in stack.get("/tasks", project="uiprof") if t["kind"] == "session" and stack.session(t["id"]).get("lead"))
         assert stack.session(lead_task["id"])["agent"] == "ui-lead"
+        page.locator("[data-tile][data-role=lead]").wait_for(timeout=30000)
 
-        page.goto(page.base + "/lead/uiprof", wait_until="load")
-        strip = page.locator("[data-profile-strip]")
-        strip.wait_for(timeout=15000)
-        assert "Profile ui" in strip.inner_text() and "fixed since the project started" in strip.inner_text()
-        strip.locator("[data-strip-coder=ui-codex] button[aria-label='more Codex lanes']").click()
+        page.keyboard.press("Control+Shift+KeyP")
+        page.wait_for_url("**/control", timeout=10000)
+        page.locator("[data-project-settings=uiprof]").click()
+        dialog = page.locator("[data-project-dialog=uiprof]")
+        picker = dialog.locator("[data-profile-picker][data-locked=true]")
+        picker.wait_for(timeout=15000)
+        assert "fixed since uiprof started" in picker.inner_text()
+        assert dialog.locator("[data-roster]").count() == 0, "a profiled project has no roster"
+        picker.locator("[data-role=coder]", has_text="Codex").locator("button[aria-label='more Codex lanes']").click()
         stack.wait_for(lambda: stack.get("/projects/uiprof/settings")["lanes"] == {"ui-claude": 1, "ui-codex": 3}, 10, "the count to be saved for the project")
         stack.wait_for(lambda: (_agent(stack, "ui-codex") or {}).get("capacity") == 3, 40, "the third Codex lane")
-
-        page.keyboard.press("g")
-        dialog.wait_for(timeout=10000)
-        dialog.locator("[role=combobox]").first.click()
-        page.get_by_role("option", name="uiprof", exact=True).click()
-        picker = dialog.locator("[data-profile-picker][data-locked=true]")
-        picker.wait_for(timeout=10000)
-        assert "fixed since uiprof started" in picker.inner_text()
         page.keyboard.press("Escape")
         assert not page.errors
     finally:
-        if lead_task:
-            stack.post(f"/tasks/{lead_task['id']}/cancel")
+        stack.post("/settings", {"default_profile": ""})
+        for t in stack.get("/tasks", project="uiprof"):
+            stack.post(f"/tasks/{t['id']}/cancel")
         stack.http.delete("/projects/uiprof")
         httpx.post(page.base + "/api/local/materialize", timeout=60)
     stack.wait_for(lambda: not (_agent(stack, "ui-lead") or {}).get("alive"), 40, "the profile's lanes to retire")

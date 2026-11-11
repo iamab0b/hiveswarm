@@ -3,7 +3,10 @@
     .venv/bin/python tests/screenshots.py            # writes docs/screenshots/*.png
 
 Needs tmux, Playwright with Chromium (`playwright install chromium`, or HIVESWARM_E2E_CHROMIUM=/path/to/chrome),
-and `hiveswarm-mcp` on PATH (it is, inside the project's virtualenv) for the lead session.
+and `hiveswarm-mcp` on PATH (it is, inside the project's virtualenv) for the chat agent and the lead.
+
+It drives the app the way a person does: the window opens on the Home chat, the chat agent starts a project and the
+view follows it, a busy project's workspace tiles its agents, and the Control tab holds the rest.
 """
 from __future__ import annotations
 
@@ -16,14 +19,65 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from conftest import Stack, free_port, make_repo  # noqa: E402
+from conftest import Stack, free_port  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "screenshots"
 
 
+WIDTH, HEIGHT, SCALE = 1600, 960, 1.25
+
+
 def attention(stack: Stack, tid: str) -> str | None:
     return (stack.session(tid).get("attention") or {}).get("kind")
+
+
+def open_window(play, exe: str | None):
+    """A window whose page is WIDTH x HEIGHT at a real device scale factor. Playwright's own `device_scale_factor`
+    is an emulation under which Chromium reports device-pixel sizes in CSS pixels, and the terminals' WebGL canvases
+    then come out the wrong size; a scale factor the browser itself was started with does not have that problem."""
+    args = [f"--force-device-scale-factor={SCALE}", f"--window-size={WIDTH},{HEIGHT}"]
+    browser = play.chromium.launch(executable_path=exe, args=args) if exe else play.chromium.launch(args=args)
+    ctx = browser.new_context(no_viewport=True, color_scheme="dark")
+    pg = ctx.new_page()
+    pg.goto("about:blank")
+    cdp = ctx.new_cdp_session(pg)
+    win = cdp.send("Browser.getWindowForTarget")["windowId"]
+    for _ in range(8):
+        w, h = pg.evaluate("[innerWidth, innerHeight]")
+        if (w, h) == (WIDTH, HEIGHT):
+            break
+        b = cdp.send("Browser.getWindowBounds", {"windowId": win})["bounds"]
+        cdp.send("Browser.setWindowBounds", {"windowId": win, "bounds": {"width": b["width"] + WIDTH - w, "height": b["height"] + HEIGHT - h}})
+        pg.wait_for_timeout(300)
+    return browser, pg
+
+
+def chat_terminal(pg, workspace: str) -> str:
+    """Wait until the chat agent's terminal of this workspace is on the page (not the one of the workspace the page
+    is just leaving) and has had a moment to connect and draw. Returns the chat agent's id."""
+    tile = pg.locator(f"[data-workspace='{workspace}'] [data-tile][data-role=chat]")
+    tile.locator("[data-term=attach] .xterm-screen").wait_for(timeout=40000)
+    pg.wait_for_timeout(2500)
+    return tile.get_attribute("data-tile")
+
+
+def screen(stack: Stack, tid: str) -> str:
+    """What an agent's terminal shows, read from tmux (the page draws it on a canvas)."""
+    cid = stack.post(f"/sessions/{tid}/send", {"screen": True, "lines": 60})["command_id"]
+    for _ in range(40):
+        c = stack.get(f"/sessions/commands/{cid}")
+        if c.get("done_at"):
+            return c.get("result") or ""
+        time.sleep(0.25)
+    return ""
+
+
+def ask(stack: Stack, pg, tid: str, text: str) -> None:
+    """Type a line into the chat agent's terminal and wait for its answer."""
+    pg.keyboard.type(text)
+    pg.keyboard.press("Enter")
+    stack.wait_for(lambda: f"You said: {text}" in screen(stack, tid), 60, "the chat agent's answer")
 
 
 def main() -> int:
@@ -36,15 +90,16 @@ def main() -> int:
     stack.env["PATH"] = f"{venv_bin}{os.pathsep}{stack.env['PATH']}"
     stack.env["FAKE_STEP"] = "0.5"
     wt = home / "worker.toml"
-    wt.write_text(wt.read_text().replace("concurrency = 2", "concurrency = 4"))
+    wt.write_text(wt.read_text().replace("concurrency = 2", "concurrency = 8").replace("concurrency = 1", "concurrency = 3"))
     stack.start()
     ui_port = free_port()
     ui_log = open(home / "ui.log", "ab")
     ui = subprocess.Popen([sys.executable, "-c", f"from hiveswarm.ui_server import main; main(port={ui_port}, open_browser=False)"],
                           env=stack.env, stdout=ui_log, stderr=subprocess.STDOUT)
     base = f"http://127.0.0.1:{ui_port}"
+    live: list[str] = []
     try:
-        # ── history for the Stats page: a handful of finished tasks on both agents ──
+        # ── history: finished tasks on both agents (the stats, and the chips of finished work) ──
         done = []
         for i, spec in enumerate(["Add a docstring to add()", "Add type hints to add.py", "Add subtract() with a test",
                                   "Write a module docstring", "Add __all__ to add.py", "Add a multiply() with a test"]):
@@ -53,107 +108,106 @@ def main() -> int:
             done.append(r["id"])
         for tid in done:
             stack.wait_for(lambda t=tid: stack.state(t) in ("done", "failed"), 120, "history task")
+        untested = stack.post("/tasks", {"project": "demo", "spec": "Tidy the imports in add.py [skip tests]", "acceptance": "python3 -c 'import add'",
+                                         "origin": "you", "agent": "claude_code"})["id"]
         failing = stack.post("/tasks", {"project": "demo", "spec": "Make the tests fail on purpose", "acceptance": "false", "origin": "you"})["id"]
+        stack.wait_for(lambda: stack.state(untested) == "done", 120, "the untested task")
         stack.wait_for(lambda: stack.state(failing) == "failed", 200, "the failing task")
-
-        # ── a standing order on the project ──
         stack.post("/directives", {"project": "demo", "text": "Never copy code from a repository we do not have permission to copy from.",
                                    "every_tools": 8, "every_minutes": 10, "check": True, "created_by": "you"})
+        stack.put("/projects/demo/plan", {"text": "## Plan\n1. divide() that raises on zero\n2. tests for both branches\n3. README section\n\nDecisions: keep add.py a single module.", "by": "lead"})
 
-        # ── three interactive sessions in three states: needs approval, asks a question, waiting for input ──
-        a = stack.post("/sessions", {"project": "demo", "spec": "Add input validation to the signup form and cover it with tests",
-                                     "permission_mode": "auto", "origin": "you"})["id"]
-        b = stack.post("/sessions", {"project": "demo", "spec": "Refactor add.py into a small arithmetic module with a CLI",
-                                     "permission_mode": "auto", "origin": "you"})["id"]
-        c = stack.post("/sessions", {"project": "demo", "spec": "Ship the arithmetic library: fix add(), add subtract(), tests for both, then a README",
-                                     "permission_mode": "auto", "agent": "codex", "origin": "you"})["id"]
-        stack.wait_for(lambda: attention(stack, a) == "permission", 60, "session A permission")
-        stack.wait_for(lambda: attention(stack, b) == "permission", 60, "session B permission")
-        stack.post(f"/sessions/{b}/answer", {"choice": "deny"})
-        stack.wait_for(lambda: attention(stack, b) == "question", 60, "session B question")
-        stack.wait_for(lambda: attention(stack, c) == "input", 60, "session C idle")
-        queued = stack.post("/tasks", {"project": "demo", "spec": "Write a CHANGELOG.md summarizing the arithmetic module changes",
-                                       "acceptance": "test -f CHANGELOG.md", "origin": "you", "agent": "codex"})["id"]
-
-        # ── a lead session that plans and dispatches through the MCP server ──
-        lead = stack.post("/sessions", {"project": "demo", "spec": "Add a divide() that raises on zero, with tests",
-                                        "permission_mode": "auto", "lead": True, "persistent": True, "origin": "you"})["id"]
-        stack.wait_for(lambda: attention(stack, lead) == "question", 90, "the lead's plan question")
-
-        # ── a profile, and a second project that runs on it (its lanes appear on the Agents page) ──
+        # ── a profile, the default one: what a project the chat agent starts runs on ──
         stack.post("/profiles", {"name": "deep", "note": "Opus leads and reviews, two Opus medium lanes, Codex for tests",
                                  "lead": {"adapter": "claude_code", "model": "opus", "effort": "max"},
-                                 "chat": {"model": "sonnet"},
                                  "coders": [{"adapter": "claude_code", "model": "opus", "effort": "medium", "count": 2},
                                             {"adapter": "codex", "model": "gpt-5.5", "effort": "high", "count": 1}]})
-        stack.post("/projects", {"name": "web", "repo_path": str(make_repo(home / "repos" / "web"))})
-        stack.post("/projects/web/settings", {"profile": "deep"})
-        import httpx as _httpx
-        _httpx.post(base + "/api/local/materialize", timeout=60)
-        stack.wait_for(lambda: all(any(x["agent_id"] == n and x["alive"] for x in stack.get("/agents"))
-                                   for n in ("deep-lead", "deep-claude-opus-medium", "deep-codex-gpt-5-5-high")), 60, "the profile's lanes")
+        stack.post("/settings", {"default_profile": "deep", "chat_model": "sonnet"})
 
         with sync_playwright() as play:
-            exe = os.environ.get("HIVESWARM_E2E_CHROMIUM")
-            browser = play.chromium.launch(executable_path=exe) if exe else play.chromium.launch()
-            ctx = browser.new_context(viewport={"width": 1600, "height": 960}, device_scale_factor=1.25, color_scheme="dark")
-            pg = ctx.new_page()
+            browser, pg = open_window(play, os.environ.get("HIVESWARM_E2E_CHROMIUM"))
             errors: list[str] = []
             pg.on("pageerror", lambda e: errors.append(str(e)))
 
-            def shot(path: str, name: str, wait: int = 2500) -> None:
-                pg.goto(base + path, wait_until="load")
+            def shot(name: str, wait: int = 1200) -> None:
                 pg.wait_for_timeout(wait)
                 pg.screenshot(path=str(OUT / name))
-                print("wrote", name)
+                print("wrote", name, flush=True)
 
-            shot("/", "01-swarm.png", 3000)
-            pg.click("text=wall")
-            pg.wait_for_timeout(3000)
-            pg.screenshot(path=str(OUT / "02-swarm-wall.png"))
-            print("wrote 02-swarm-wall.png")
-            pg.click("text=cards")
-            shot(f"/sessions/{a}", "03-session-permission.png", 3000)
-            shot("/inbox", "05-inbox.png")
-            shot("/hive", "06-hive.png")
-            shot("/", "09-new-goal.png", 1000)
-            pg.keyboard.press("g")
-            pg.wait_for_timeout(600)
-            pg.fill("[role=dialog] textarea", "Add rate limiting to the API: a token bucket per user, config in settings.toml, tests for the limits")
-            pg.wait_for_timeout(400)
-            pg.screenshot(path=str(OUT / "09-new-goal.png"))
+            # ── the app opens on one terminal: a fresh chat agent ──
+            pg.goto(base + "/", wait_until="load")
+            home_chat = chat_terminal(pg, "_home")
+            ask(stack, pg, home_chat, "What can you do from here?")
+            shot("01-home-chat.png", 1500)
+
+            # ── it starts a project; the view follows it and the lead appears beside it ──
+            pg.keyboard.type("start orbit: Build a small orbit calculator: period and velocity from altitude, with tests")
+            pg.keyboard.press("Enter")
+            pg.wait_for_url("**/p/orbit", timeout=40000)
+            lead = stack.wait_for(lambda: next((x["lead"] for x in stack.get("/leads") if x["project"] == "orbit" and x["lead"]), None), 30, "orbit's lead")
+            live.append(lead["id"])
+            stack.wait_for(lambda: attention(stack, lead["id"]) == "question", 90, "the lead's plan question")
+            shot("02-project-started.png", 2500)
+
+            # ── a busy project: its lead asks, one agent needs an approval, others work, headless tasks stream ──
+            dlead = stack.post("/leads", {"project": "demo", "message": "Add a divide() that raises on zero, with tests"})["id"]
+            a = stack.post("/sessions", {"project": "demo", "spec": "Add input validation to the signup form and cover it with tests",
+                                         "permission_mode": "auto", "origin": "lead"})["id"]
+            b = stack.post("/sessions", {"project": "demo", "spec": "Refactor add.py into a small arithmetic module with a CLI",
+                                         "permission_mode": "auto", "agent": "codex", "origin": "lead"})["id"]
+            live += [dlead, a, b]
+            stack.wait_for(lambda: attention(stack, a) == "permission", 60, "the agent's permission request")
+            stack.wait_for(lambda: attention(stack, dlead) == "question", 90, "demo's lead to ask")
+            for spec in ["Write the README section for divide()", "Add type hints to the arithmetic module"]:
+                live.append(stack.post("/tasks", {"project": "demo", "spec": spec, "acceptance": "sleep 240; python3 -c 'import add'", "origin": "lead"})["id"])
+            names = list(stack.get("/projects").keys())
+            pg.keyboard.press(f"Control+Shift+Digit{names.index('demo') + 1}")
+            pg.wait_for_url("**/p/demo", timeout=10000)
+            ask(stack, pg, chat_terminal(pg, "demo"), "What is the lead waiting for?")
+            shot("03-workspace.png", 3000)
+
+            pg.locator(f"[data-tile='{b}']").click()
+            pg.keyboard.press("Control+Shift+KeyZ")
+            shot("04-zoom.png", 1500)
+            pg.keyboard.press("Control+Shift+KeyZ")
+
+            pg.locator(f"[data-done-chip='{done[2]}']").click()
+            pg.locator(f"[data-detail='{done[2]}'] button", has_text="Diff").click()
+            shot("05-details.png", 1500)
             pg.keyboard.press("Escape")
-            shot("/stats", "30-stats-performance.png")
-            shot("/agents", "08-agents.png")
-            shot("/lead/demo", "20-lead-chat.png", 3000)
-            shot("/lead/web", "22-lead-profile.png", 2500)
-            # ── the advisor: a question, then a change of course that pauses the project and briefs the lead ──
-            stack.post("/advisor/demo/talk", {"text": "What is the swarm doing right now?"})
-            stack.wait_for(lambda: not stack.get("/advisor/demo")["thinking"] and stack.get("/advisor/demo")["messages"], 60, "the advisor's answer")
-            stack.post("/advisor/demo/talk", {"text": "Please pause: we need to change course and ship the tests before the CLI"})
-            stack.wait_for(lambda: not stack.get("/advisor/demo")["thinking"] and len([m for m in stack.get("/advisor/demo")["messages"] if m["kind"] == "text"]) >= 2, 60, "the advisor's second answer")
-            pg.goto(base + "/lead/demo", wait_until="load")
-            pg.wait_for_timeout(2000)
-            pg.click("button:has-text('Advisor')")
-            pg.wait_for_timeout(1500)
-            pg.screenshot(path=str(OUT / "21-advisor.png"))
-            print("wrote 21-advisor.png")
-            stack.post("/projects/demo/resume")
-            shot(f"/sessions/{b}", "24-session-standing-orders.png", 2500)
-            try:
-                pg.click("button:has-text(\"Standing orders\")", timeout=3000)
-                pg.wait_for_timeout(800)
-                pg.screenshot(path=str(OUT / "24-session-standing-orders.png"))
-            except Exception as e:
-                print("standing orders panel:", e)
+
+            # ── many agents: two columns of tiles, small terminals as live miniatures, the quietest as title lines ──
+            for spec in ["Add a power() with a test", "Add a modulo() with a test", "Document the CLI flags", "Add a changelog entry",
+                         "Add a benchmark script", "Check the edge cases of subtract()"]:
+                live.append(stack.post("/tasks", {"project": "demo", "spec": spec, "acceptance": "sleep 240; python3 -c 'import add'", "origin": "lead"})["id"])
+            for spec in ["Port the test suite to pytest fixtures", "Write the packaging metadata"]:
+                live.append(stack.post("/sessions", {"project": "demo", "spec": spec, "permission_mode": "auto", "origin": "lead"})["id"])
+            stack.wait_for(lambda: sum(1 for t in stack.get("/tasks", project="demo", limit=100) if t["state"] in ("running", "verifying")) >= 10, 90, "the swarm to fill up")
+            shot("06-many-agents.png", 5000)
+
+            # ── the other tab ──
+            pg.keyboard.press("Control+Shift+KeyP")
+            pg.wait_for_url("**/control", timeout=10000)
+            shot("07-control.png", 3000)
+            pg.evaluate("document.getElementById('agents').scrollIntoView({block: 'start'})")
+            shot("08-control-agents.png", 1200)
+            pg.evaluate("document.getElementById('activity').scrollIntoView({block: 'start'})")
+            shot("09-control-activity.png", 2500)
+            pg.evaluate("document.querySelector('[data-control]').scrollTo(0, 0)")
+            pg.locator("[data-project-settings=demo]").click()
+            pg.locator("[data-project-dialog=demo] [data-plan] button").click()
+            shot("10-project-settings.png", 1500)
+            pg.keyboard.press("Escape")
+
             pg.evaluate("localStorage.setItem('hm.theme','light')")
-            shot("/", "11-swarm-light.png", 2500)
+            pg.goto(base + "/p/orbit", wait_until="load")
+            chat_terminal(pg, "orbit")
+            shot("11-workspace-light.png", 2500)
             pg.evaluate("localStorage.setItem('hm.theme','dark')")
             browser.close()
             if errors:
                 print("page errors:", errors)
-        # answer what is pending so the fakes exit cleanly
-        for tid in (a, b, c, lead, queued):
+        for tid in live:
             try:
                 stack.post(f"/tasks/{tid}/cancel")
             except Exception:
@@ -161,9 +215,9 @@ def main() -> int:
         time.sleep(1)
         return 0
     except Exception:
-        for tid in stack.get("/tasks", limit=10):
-            if tid.get("kind") == "session":
-                print(f"--- {tid['id']} ({tid['state']}):\n" + stack.log_text(tid["id"])[-1500:])
+        for t in stack.get("/tasks", limit=12):
+            if t.get("kind") == "session":
+                print(f"--- {t['id']} ({t['state']}):\n" + stack.log_text(t["id"])[-1500:])
         raise
     finally:
         ui.terminate()

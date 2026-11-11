@@ -121,7 +121,7 @@ async def events(request: Request) -> StreamingResponse:
                 if now - last_state_at >= state_every:
                     last_state_at = now
                     summary, tasks, inbox, agents = await asyncio.gather(
-                        _fetch("/summary"), _fetch("/tasks", limit=300), _fetch("/inbox"), _fetch("/agents"))
+                        _fetch("/summary"), _fetch("/tasks", limit=300, live="true"), _fetch("/inbox"), _fetch("/agents"))
                     state = {"summary": summary, "tasks": tasks, "inbox": inbox.get("items", []), "agents": agents,
                              "ts": int(time.time())}
                     h = hashlib.md5(json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()
@@ -348,7 +348,7 @@ async def _materialize_now() -> dict[str, Any]:
 @app.post("/api/local/materialize")
 async def local_materialize() -> dict[str, Any]:
     """Write the tables the profiled projects need into this machine's worker.toml now (the app also does this every
-    30 s); returns what changed."""
+    15 s); returns what changed."""
     try:
         return await _materialize_now()
     except Exception as e:
@@ -356,8 +356,10 @@ async def local_materialize() -> dict[str, Any]:
 
 
 async def _materialize_loop() -> None:
+    """Keep worker.toml in step with the profiles: once when the app starts, then every 15 s (one small request to
+    the hub; a project the chat agent just started gets its lead's table without anyone asking)."""
+    await asyncio.sleep(1)
     while True:
-        await asyncio.sleep(30)
         try:
             r = await _materialize_now()
             if r.get("changes"):
@@ -366,11 +368,70 @@ async def _materialize_loop() -> None:
                 log.warning("worker.toml has tables a profile wants to write but did not: %s", ", ".join(r["conflicts"]))
         except Exception as e:
             log.debug("materialize skipped: %s", e)
+        await asyncio.sleep(15)
 
 
 @app.on_event("startup")
 async def _start_materialize() -> None:
     asyncio.create_task(_materialize_loop())
+
+
+# ── subscriptions: the agent CLIs on this machine and their sign-ins ──────
+
+_SUBS_TTL = 20.0
+_subs_cache: tuple[float, list[dict[str, Any]]] | None = None
+
+
+def subscriptions() -> list[dict[str, Any]]:
+    """One row per agent CLI Hiveswarm can drive on this machine: installed or not, signed in or not (read from the
+    files each CLI keeps its login in; nothing is sent anywhere), and the command that fixes it."""
+    from .workers import adapters, claude_auth
+    cfg = _worker_cfg()
+    agents = cfg.get("agents") or {}
+    home = Path.home()
+
+    def tables(adapter: str) -> list[str]:
+        return [n for n, a in agents.items() if isinstance(a, dict) and a.get("adapter", n) == adapter and a.get("enabled", True) is not False]
+
+    rows: list[dict[str, Any]] = []
+
+    def row(adapter: str, label: str, plan: str, signed: bool | None, detail: str, fix: str) -> None:
+        binary = adapters.BINARIES.get(adapter, adapter)
+        installed = bool(shutil.which(binary))
+        rows.append({"id": adapter, "label": label, "plan": plan, "binary": binary, "installed": installed,
+                     "signed_in": signed if installed else None, "detail": detail if installed else f"{binary} is not on PATH",
+                     "fix": fix, "tables": tables(adapter)})
+
+    st = claude_auth.status(agents.get("claude_code") if isinstance(agents.get("claude_code"), dict) else {})
+    if st["token"]:
+        cdetail = "signed in for every lane (one-year token)"
+    elif st["login_in_config_dir"]:
+        cdetail = "using a /login that expires; hm login claude stores a one-year token"
+    else:
+        cdetail = "not signed in"
+    row("claude_code", "Claude Code", "Claude subscription", bool(st["token"] or st["login_in_config_dir"]), cdetail, "claude setup-token, then: hm login claude")
+    codex = (home / ".codex" / "auth.json").is_file()
+    row("codex", "Codex", "ChatGPT subscription", codex, "signed in" if codex else "not signed in", "codex login")
+    gem = any((home / ".gemini" / f).is_file() for f in ("oauth_creds.json", "google_accounts.json"))
+    row("gemini", "Gemini CLI", "Google account", gem, "signed in" if gem else "not signed in", "gemini (once, and pick your login)")
+    cur = any(p.is_file() for p in (home / ".cursor" / "cli-config.json", home / ".config" / "cursor" / "auth.json"))
+    row("cursor", "Cursor", "Cursor subscription", cur if cur else None, "signed in" if cur else "sign-in not checked; run cursor-agent status", "cursor-agent login")
+    agy = (home / ".antigravity").is_dir() or (home / ".config" / "antigravity").is_dir()
+    row("antigravity", "Antigravity", "Google account", agy if agy else None, "configured" if agy else "sign-in not checked", "agy (once, and sign in)")
+    known = {r["id"] for r in rows}
+    for name in sorted(adapters.ADAPTERS):
+        if name not in known and name not in ("prime_agent", "local_direct"):
+            row(name, name, "plugin", None, "plugin adapter", "")
+    return rows
+
+
+@app.get("/api/local/subscriptions")
+async def local_subscriptions() -> dict[str, Any]:
+    global _subs_cache
+    now = time.monotonic()
+    if _subs_cache is None or now - _subs_cache[0] > _SUBS_TTL:
+        _subs_cache = (now, await asyncio.to_thread(subscriptions))
+    return {"host": S.hostname, "subscriptions": _subs_cache[1]}
 
 
 # ── local project copies (this machine) ───────────────────────────────────
@@ -491,11 +552,17 @@ def _crop_ansi(line: str, cols: int) -> str:
     return "".join(out) + "\x1b[0m"
 
 
-async def _snapshot_loop(ws: WebSocket, win: str, cols: int, rows: int) -> None:
+async def _snapshot_loop(ws: WebSocket, win: str, cols: int, rows: int, mini: bool = False) -> None:
+    """A read-only view of a tmux window, re-sent when it changes. Cropped to the viewer's size by default. With
+    `mini`, the whole visible screen is sent as it is, preceded by its size whenever that changes, so the viewer can
+    draw the terminal at its real dimensions and scale the picture down: a live miniature that never resizes the
+    agent's own terminal."""
     last = ""
+    size = (0, 0)
+    every = 0.7 if mini else 0.45
     while True:
         try:
-            msg = await asyncio.wait_for(ws.receive(), timeout=0.45)
+            msg = await asyncio.wait_for(ws.receive(), timeout=every)
             if msg.get("type") == "websocket.disconnect":
                 return
             if msg.get("text"):
@@ -508,15 +575,33 @@ async def _snapshot_loop(ws: WebSocket, win: str, cols: int, rows: int) -> None:
                     pass
         except TimeoutError:
             pass
-        r = _tmux("capture-pane", "-e", "-p", "-t", win, "-S", f"-{max(rows * 3, 60)}")
-        if r.returncode != 0:
-            await ws.send_text(json.dumps({"type": "error", "message": "the terminal window is gone"}))
-            return
-        lines = r.stdout.rstrip("\n").split("\n")
-        while lines and not _ANSI_RE.sub("", lines[-1]).strip():
-            lines.pop()
-        shown = lines[-rows:] if rows > 0 else lines
-        frame = "\x1b[2J\x1b[H" + "\r\n".join(_crop_ansi(ln, cols) for ln in shown)
+        if mini:
+            r = await asyncio.to_thread(_tmux, "display-message", "-p", "-t", win, "#{pane_width} #{pane_height}", ";",
+                                        "capture-pane", "-e", "-p", "-t", win)
+            if r.returncode != 0:
+                await ws.send_text(json.dumps({"type": "error", "message": "the terminal window is gone"}))
+                return
+            head, _, body = r.stdout.partition("\n")
+            try:
+                w, h = (int(x) for x in head.split())
+            except ValueError:
+                continue
+            if (w, h) != size:
+                size = (w, h)
+                last = ""
+                await ws.send_text(json.dumps({"type": "size", "cols": w, "rows": h}))
+            lines = body.rstrip("\n").split("\n")[:h]
+            frame = "\x1b[2J\x1b[H" + "\r\n".join(ln + "\x1b[0m" for ln in lines)
+        else:
+            r = await asyncio.to_thread(_tmux, "capture-pane", "-e", "-p", "-t", win, "-S", f"-{max(rows * 3, 60)}")
+            if r.returncode != 0:
+                await ws.send_text(json.dumps({"type": "error", "message": "the terminal window is gone"}))
+                return
+            lines = r.stdout.rstrip("\n").split("\n")
+            while lines and not _ANSI_RE.sub("", lines[-1]).strip():
+                lines.pop()
+            shown = lines[-rows:] if rows > 0 else lines
+            frame = "\x1b[2J\x1b[H" + "\r\n".join(_crop_ansi(ln, cols) for ln in shown)
         if frame != last:
             last = frame
             await ws.send_bytes(frame.encode())
@@ -545,11 +630,11 @@ async def term(ws: WebSocket, tid: str) -> None:
         await ws.send_text(json.dumps({"type": "error", "message": "the terminal window is gone"}))
         await ws.close()
         return
-    if ws.query_params.get("mode") == "snapshot":
+    if ws.query_params.get("mode") in ("snapshot", "mini"):
         cols = int(ws.query_params.get("cols") or 80)
         rows = int(ws.query_params.get("rows") or 24)
         try:
-            await _snapshot_loop(ws, str(win), cols, rows)
+            await _snapshot_loop(ws, str(win), cols, rows, mini=ws.query_params.get("mode") == "mini")
         except WebSocketDisconnect:
             pass
         finally:
@@ -660,7 +745,7 @@ def _tune_tmux() -> None:
 
 # ── static app ───────────────────────────────────────────────────────────
 
-@app.get("/{path:path}")
+@app.api_route("/{path:path}", methods=["GET", "HEAD"])
 async def static(path: str) -> Response:
     """The built app. `index.html` (and the manifest) must be checked against the server on every load, so an
     upgraded engine shows its own page the moment the window opens; the hashed files under `assets/` never change

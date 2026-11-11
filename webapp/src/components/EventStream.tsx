@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDownToLine, Pause } from "lucide-react";
-import { Link } from "react-router-dom";
 import { agentColor, agentLabel, classifyEntry, clock, cn, type FeedKind } from "@/lib/utils";
 import type { FeedEntry } from "@/lib/types";
 import { Button } from "./ui/button";
+import { TaskLink } from "./bits";
 
 const KIND: Record<string, { glyph: string; cls: string; body: string }> = {
   msg: { glyph: "»", cls: "text-muted", body: "text-fg" },
@@ -42,7 +42,7 @@ export function EventLine({ e, showTask, showAgent, dense }: { e: FeedEntry; sho
       style={{ gridTemplateColumns: `62px ${showTask ? "60px " : ""}${showAgent ? "96px " : ""}14px minmax(0,1fr)` }}>
       <span className="mono num pt-[1px] text-[11px] text-dim">{clock(e.ts)}</span>
       {showTask ? (
-        <Link to={`/t/${e.task_id}`} className="mono pt-[1px] text-[11px] text-dim hover:text-fg">{e.task_id.slice(0, 8)}</Link>
+        <TaskLink id={e.task_id} className="pt-[1px] text-left text-[11px] text-dim" />
       ) : null}
       {showAgent ? (
         <span className="flex items-center gap-1.5 truncate pt-[1px] text-[11px] text-muted">
@@ -56,16 +56,21 @@ export function EventLine({ e, showTask, showAgent, dense }: { e: FeedEntry; sho
   );
 }
 
-export function EventStream({ entries, showTask, showAgent, className, emptyText = "nothing yet", dense }: {
+export function EventStream({ entries, showTask, showAgent, className, emptyText = "nothing yet", dense, quiet }: {
   entries: FeedEntry[];
   showTask?: boolean;
   showAgent?: boolean;
   className?: string;
   emptyText?: string;
   dense?: boolean;
+  /** in a tile: no "scroll up to pause" hint, and the follow button only after you scrolled */
+  quiet?: boolean;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
+  const followRef = useRef(true);
+  followRef.current = follow;
+  const userAt = useRef(0);
   const count = entries.length;
   const virt = useVirtualizer({
     count,
@@ -81,12 +86,26 @@ export function EventStream({ entries, showTask, showAgent, className, emptyText
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return;
+    // Only a scroll you made unpins the view; one caused by the pane changing size (a tile resized) does not.
+    const touched = () => { userAt.current = Date.now(); };
     const onScroll = () => {
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-      setFollow(atBottom);
+      if (atBottom) setFollow(true);
+      else if (Date.now() - userAt.current < 1000) setFollow(false);
     };
+    const ro = new ResizeObserver(() => { if (followRef.current) el.scrollTop = el.scrollHeight; });
+    ro.observe(el);
     el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
+    el.addEventListener("wheel", touched, { passive: true });
+    el.addEventListener("pointerdown", touched, { passive: true });
+    el.addEventListener("keydown", touched);
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("wheel", touched);
+      el.removeEventListener("pointerdown", touched);
+      el.removeEventListener("keydown", touched);
+    };
   }, []);
   const items = virt.getVirtualItems();
   const empty = useMemo(() => count === 0, [count]);
@@ -117,7 +136,7 @@ export function EventStream({ entries, showTask, showAgent, className, emptyText
           </Button>
         </div>
       ) : null}
-      {follow && count > 0 ? (
+      {follow && count > 0 && !quiet ? (
         <div className="pointer-events-none absolute bottom-2 right-3 flex items-center gap-1 text-meta"><Pause className="h-3 w-3" />scroll up to pause</div>
       ) : null}
     </div>

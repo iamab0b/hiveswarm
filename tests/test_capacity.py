@@ -71,7 +71,7 @@ def test_agents_page_stepper_changes_lanes(stack, page):
 
     def configured(agent: str) -> int:
         return int(tomllib.loads((stack.home / "worker.toml").read_text())["agents"][agent].get("concurrency", 1))
-    page.goto(page.base + "/agents", wait_until="load")
+    page.goto(page.base + "/control", wait_until="load")
     card = page.locator("[data-agent-card=codex]")
     card.locator("button[aria-label='more lanes']").wait_for(timeout=10000)
     card.locator("button[aria-label='more lanes']").click()
@@ -101,7 +101,7 @@ def test_agents_page_stepper_changes_lanes(stack, page):
 
 @pytest.mark.e2e
 def test_hub_lane_card_is_read_only(stack, page):
-    page.goto(page.base + "/agents", wait_until="load")
+    page.goto(page.base + "/control", wait_until="load")
     card = page.locator("[data-agent-card=prime_agent]")
     card.wait_for(timeout=10000)
     text = card.inner_text()

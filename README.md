@@ -6,7 +6,7 @@
 
 <p align="center">
   A control plane for swarms of coding agents.<br>
-  Route tasks across Claude Code, Codex, Cursor, Gemini and local models, watch and steer every agent live, and let a lead agent run the swarm.
+  One window of real terminals: a chat agent you talk to, a lead that plans and spawns agents from every subscription you have, and a tile for each of them.
 </p>
 
 <p align="center">
@@ -14,17 +14,17 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
 </p>
 
-![The Swarm page: three live sessions — one needs approval for a force push, one asks a design question, one is waiting for input](docs/screenshots/01-swarm.png)
+![A project's workspace: the chat agent, the lead beside it asking a question, and the agents it spawned, one of them waiting for an approval](docs/screenshots/03-workspace.png)
 
 You already pay for several coding agents. Hiveswarm makes them one team:
 
-- **Tasks go to the agent that is best at them right now.** Every task is classified (type, difficulty, needs tools?), routed by measured pass rate and step time per agent and task type, verified against an acceptance command you set, and retried on another agent with a handoff note when it fails. Slow or failing agents go on probation for that kind of work and earn their way back.
-- **Every agent runs where you can see it.** Headless tasks stream their tool calls, thinking and diffs into the app. Interactive sessions run in real terminals (tmux) in the browser; permission requests, questions and "waiting for you" moments land in one inbox with keyboard shortcuts to approve, deny, answer or type.
-- **A lead agent can run the whole thing.** `hm lead <project>` starts a persistent Claude Code session with the `hiveswarm` MCP server and five skills (plan, route, review, triage, craft). Tell it what the project needs; it plans, sizes the swarm, dispatches, watches, reviews and merges, and asks you only when it has to.
-- **Standing orders keep agents honest.** A rule you set — "never copy from repos we can't license", "run the tests before every commit" — sits at the top of every prompt, is re-injected on a cadence (through hooks for Claude Code, typed in for the others), and is audited: a likely violation is flagged in the inbox and to the lead.
+- **It feels like a terminal, because it is one.** The app opens on a single terminal: a chat agent, a real Claude Code session, with no project needed to talk to it. Paste a brief and it starts a project; its terminal stays, the project's lead splits in beside it, and every agent the lead spawns splits the space again. Agents in their own terminal get a full tile, headless ones a small tile that streams, and whichever needs you grows and says so.
+- **The lead does the planning, your other subscriptions do the work.** The lead is one persistent session that plans, sizes the swarm, dispatches, reviews and merges. The tasks go to lanes on Claude Code, Codex, Cursor, Gemini or a local model, each to the agent that is best at that kind of work right now: classified, routed by measured pass rate and step time, verified against an acceptance command, and retried on another agent with a handoff note when it fails.
+- **You steer through the chat agent.** In a project it is your interface to the lead: ask what is going on, and when the idea or the steps change, say so. It pauses the project, briefs the lead, and the lead adjusts and resumes. You can still type into any terminal.
+- **A profile per project.** Name which model leads and which ones code, with lanes per coder; one profile is the default for new projects. Once a project has started its profile stays and only its lane counts change. The app writes the agent tables a profile needs into `worker.toml` and the worker picks them up live.
+- **Standing orders keep agents honest.** A rule you set — "never copy from repos we can't license", "run the tests before every commit" — sits at the top of every prompt, is re-injected on a cadence (through hooks for Claude Code, typed in for the others), and is audited: a likely violation is flagged on the agent's tile and to the lead.
 - **Every agent works to one standard.** The Craft ruleset (understand first, a production-code ladder adapted from Ponytail, tests required but not excess, a Changed / Tested / Deferred handoff) goes into every prompt and session. Hiveswarm reads the handoff back: deferred shortcuts land in a ledger, and code that changed with no test touched or run is flagged `untested` and cannot merge until someone looks.
-- **Talk about the plan without stopping the swarm.** The advisor sits beside the lead with read-only tools, the plan on file and memory of what the swarm learned; when you change course it pauses the project, briefs the lead, and the lead resumes once it has adjusted.
-- **A profile per project.** Name which model leads, which one chats and which ones code, with lanes per coder; pick the profile when you start a goal and it stays for the project, only its lane counts change. The app writes the agent tables the profile needs into `worker.toml` and the worker picks them up live.
+- **Everything else is one tab away.** Control holds the projects, the subscriptions that are connected and signed in, the profiles, the agents and how many lanes each runs, and what they have been doing.
 - **Your machines, your keys.** Hiveswarm runs on one laptop, or a hub that holds the repos plus any number of workers that run the agent CLIs. Classification uses any OpenAI-compatible endpoint, a model you run yourself, or a built-in mock. Nothing leaves your machines except what the agents and the classifier you chose send.
 
 ## Install
@@ -33,7 +33,7 @@ Hiveswarm is not on PyPI. Everything ships on the [Releases page](https://github
 
 ### The desktop app (recommended)
 
-Download the installer for your machine from the latest release and open it. On first run the app installs the engine into `~/.hiveswarm/venv` (inside your WSL2 distro on Windows), writes a config with a demo project, and starts everything; after that, opening Hiveswarm is the whole routine — no terminal, no `hm ui`, no browser tab pointed at a port.
+Download the installer for your machine from the latest release and open it. On first run the app installs the engine into `~/.hiveswarm/venv` (inside your WSL2 distro on Windows), writes a config with a demo project, and starts everything; after that, opening Hiveswarm is the whole routine: the window opens on a fresh chat agent.
 
 ![Hiveswarm Desktop starting the engine for the first time](docs/screenshots/40-desktop-boot.png)
 
@@ -47,23 +47,34 @@ The app keeps the swarm running while its window is open (or in the tray), stops
 ### The engine only (hubs, servers, the CLI)
 
 ```bash
-pip install --user ./hiveswarm-0.2.0-py3-none-any.whl
+pip install --user ./hiveswarm-0.4.0-py3-none-any.whl
 hm init --project myapp --repo ~/code/myapp
 hm up
 ```
 
 `hm init` writes `~/.hiveswarm/config.toml` and `worker.toml`, detects the agents on your PATH and registers your first project (or creates an empty repo for it). `hm up` runs the decide service, the daemon, the worker and the web app in your terminal and opens http://127.0.0.1:7790. `pipx install ./hiveswarm-*.whl` and `uv tool install ./hiveswarm-*.whl` work the same way.
 
-## First tasks
+## First project
 
 ```bash
-hm login claude                                              # once: every swarm session uses this sign-in
-hm add myapp "Add a --version flag to the CLI" -a "pytest -q"   # a headless task with an acceptance command
-hm session new myapp "Refactor the config loader; ask me before changing the file format"
-hm lead myapp "Ship user avatars: upload, resize, serve. Tests for each piece."
+hm login claude          # once: every swarm session, the chat agent included, uses this sign-in
 ```
 
-Or press <kbd>g</kbd> in the app and describe a goal. Want a real classifier instead of the mock? Set `OPENAI_API_KEY` (or any OpenAI-compatible endpoint with `hm init --backend openai --openai-url http://…/v1 --openai-model …`) before `hm init`, or edit `[decide]` in `config.toml`.
+Open the app. The terminal you see is the chat agent. Paste what you want built:
+
+> Ship user avatars: upload, resize, serve. Tests for each piece.
+
+It proposes a project name and a profile, and on your yes creates the project and starts its lead. The lead's terminal appears beside the chat agent; it plans, asks before dispatching, and each agent it starts gets a tile. Approvals and questions show up on the tile that has them.
+
+The same from a shell, for a project that already exists:
+
+```bash
+hm lead myapp "Ship user avatars: upload, resize, serve. Tests for each piece."
+hm add myapp "Add a --version flag to the CLI" -a "pytest -q"      # one headless task, no lead
+hm session new myapp "Refactor the config loader; ask me before changing the file format"
+```
+
+Want a real classifier instead of the mock? Set `OPENAI_API_KEY` (or any OpenAI-compatible endpoint with `hm init --backend openai --openai-url http://…/v1 --openai-model …`) before `hm init`, or edit `[decide]` in `config.toml`.
 
 Try it without any agent installed: `pip install -e '.[dev]'` from a checkout and run `tests/screenshots.py` — the test suite ships fake `claude` and `codex` binaries that behave like the real CLIs without calling a model.
 
@@ -71,13 +82,13 @@ Try it without any agent installed: `pip install -e '.[dev]'` from a checkout an
 
 | | |
 |---|---|
-| ![Lead](docs/screenshots/20-lead-chat.png) The lead plans with `hm_advise`, asks before dispatching, then watches and merges. | ![Advisor](docs/screenshots/21-advisor.png) The advisor: discuss the plan beside the lead; a change of course pauses the project and briefs the lead. |
-| ![Agents](docs/screenshots/08-agents.png) Profiles (lead, chat, coders with lanes) and the agents behind them. | ![Profile strip](docs/screenshots/22-lead-profile.png) A project's profile above its lead; the lane counts are what you can still change. |
-| ![Inbox](docs/screenshots/05-inbox.png) One inbox for everything that needs a human, most urgent first. | ![New goal](docs/screenshots/09-new-goal.png) Describe a goal; pick a profile, then tasks, a session, or the lead. |
-| ![Stats](docs/screenshots/30-stats-performance.png) Pass rate, wall time and per-step time per agent and task type; probation is automatic. | ![Standing orders](docs/screenshots/24-session-standing-orders.png) A real terminal per session, with standing orders and events beside it. |
-| ![Hive](docs/screenshots/06-hive.png) The Hive feed: every event across every agent. | ![Light theme](docs/screenshots/11-swarm-light.png) The same swarm in the light theme. |
+| ![Home](docs/screenshots/01-home-chat.png) The app on launch: one terminal, a fresh chat agent. | ![A project starts](docs/screenshots/02-project-started.png) The chat agent started a project: the same terminal, the lead beside it. |
+| ![Many agents](docs/screenshots/06-many-agents.png) Many agents: two columns, small terminals as live miniatures, finished work as chips. | ![Zoom](docs/screenshots/04-zoom.png) Any tile zooms to the whole workspace and back. |
+| ![Details](docs/screenshots/05-details.png) An agent's record: events, diff, standing orders, merge or retry. | ![Control](docs/screenshots/07-control.png) The Control tab: projects, subscriptions, profiles. |
+| ![Agents](docs/screenshots/08-control-agents.png) The agents and their lanes. | ![Activity](docs/screenshots/09-control-activity.png) Pass rate and timings per agent, the feed, the history. |
+| ![Project settings](docs/screenshots/10-project-settings.png) A project's profile, ruleset, plan, standing orders and deferred ledger. | ![Light theme](docs/screenshots/11-workspace-light.png) A workspace in the light theme. |
 
-Light theme, keyboard-first (press <kbd>?</kbd>), installable as a PWA.
+Workspaces are switched from the keyboard (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> for Home, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>1</kbd>…<kbd>9</kbd> for projects) or from the Control tab; [docs/terminals.md](docs/terminals.md) has every key.
 
 ## How it fits together
 
@@ -97,8 +108,8 @@ Light theme, keyboard-first (press <kbd>?</kbd>), installable as a PWA.
 
 - **daemon** — the source of truth: tasks, attempts, sessions, directives, agent stats. Dispatches to workers, runs the verifier (Docker when available, otherwise the acceptance command in the worktree), merges branches.
 - **decide** — a small service in front of the classifier: caches answers, has a fallback, exposes `/decide` for classification, swarm sizing, the risk gate for session commands and standing-order audits. Backends: `openai`, `local`, `jev`, `mock`.
-- **worker** — polls the daemon, runs agents in worktrees of a mirror of the hub's repo, ships logs, hosts interactive sessions in tmux and answers Claude Code hooks. One worker per machine that has agent CLIs; the hub can be the same machine.
-- **hm** — the CLI. `hm ui` serves the web app (bundled, no Node needed). `hiveswarm-mcp` is the MCP server the lead (or your own Claude Code, Cursor, Codex…) talks to: 43 tools from `hm_add_tasks` to `hm_recall`.
+- **worker** — polls the daemon, runs agents in worktrees of a mirror of the hub's repo, ships logs, hosts the chat agents, the leads and the interactive sessions in tmux and answers Claude Code hooks. One worker per machine that has agent CLIs; the hub can be the same machine.
+- **hm** — the CLI. `hm ui` serves the web app (bundled, no Node needed). `hiveswarm-mcp` is the MCP server the lead and the chat agent (or your own Claude Code, Cursor, Codex…) talk to: 44 tools from `hm_add_tasks` to `hm_recall`, 25 of them in the chat role.
 
 The full picture is in [docs/architecture.md](docs/architecture.md).
 
@@ -108,7 +119,7 @@ A hub that holds repositories and runs the daemon, plus a laptop that runs the a
 
 ```bash
 # hub: the wheel from the release
-pip install --user ./hiveswarm-0.2.0-py3-none-any.whl && hm init --project myapp --repo ~/repos/myapp
+pip install --user ./hiveswarm-0.4.0-py3-none-any.whl && hm init --project myapp --repo ~/repos/myapp
 # in ~/.hiveswarm/config.toml: [daemon] host = "0.0.0.0", hub_ssh = "you@hub"
 hiveswarm-decide & hiveswarm-daemon
 
@@ -122,15 +133,16 @@ With the hub configured, the desktop app starts only a worker and the app on the
 
 ## Documentation
 
+- [docs/terminals.md](docs/terminals.md) — the app: Home, a project's workspace and its tiles, the keys, the Control tab
+- [docs/chat.md](docs/chat.md) — the chat agent: chatting, starting a project, following and steering the lead
 - [docs/desktop.md](docs/desktop.md) — the desktop app: what it does on first run, settings, tray, troubleshooting
 - [docs/quickstart.md](docs/quickstart.md) — the engine-only single-machine path in detail, including sign-in and the first task
 - [docs/config.md](docs/config.md) — every key in `config.toml` and `worker.toml`
 - [docs/two-machines.md](docs/two-machines.md) — hub + workers, systemd units, a local model box, network diagnostics (`hm net`)
 - [docs/lead.md](docs/lead.md) — the lead agent, its MCP tools and skills, standing orders
 - [docs/craft.md](docs/craft.md) — the Craft ruleset every agent works under: the ladder, tests, the handoff, the deferred ledger, the untested flag
-- [docs/profiles.md](docs/profiles.md) — profiles (which models lead, chat and code for a project), the agent tables behind them, and rosters
-- [docs/advisor.md](docs/advisor.md) — the advisor: talk about the plan beside the lead; pause, brief, resume
-- [docs/memory.md](docs/memory.md) — memory across tasks: a local full-text index or a Hindsight server; lessons the lead and advisor recall
+- [docs/profiles.md](docs/profiles.md) — profiles (which models lead and code for a project), the default one, the agent tables behind them, and rosters
+- [docs/memory.md](docs/memory.md) — memory across tasks: a local full-text index or a Hindsight server; lessons the lead and the chat agent recall
 - [docs/adapters.md](docs/adapters.md) — add your own agent as a plugin
 - [docs/architecture.md](docs/architecture.md) — how the pieces talk, the data model, the routing math
 - [DESIGN.md](DESIGN.md) — how the app looks and behaves: tokens, components, page patterns, what not to do

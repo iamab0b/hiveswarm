@@ -1,6 +1,6 @@
 # Memory
 
-Off by default. Switched on, the swarm remembers what it learned: every failed attempt (what was tried, what the verifier said) and every piece of work that landed, plus anything you, the lead or the advisor tell it to keep. Before the lead plans, what matches its goal goes into its prompt; the advisor gets what matches your message; both can search with `hm_recall` and keep lessons with `hm_remember`; `hm recall` and `hm remember` do the same from a terminal.
+Off by default. Switched on, the swarm remembers what it learned: every failed attempt (what was tried, what the verifier said) and every piece of work that landed, plus anything you, the lead or the chat agent tell it to keep. Before the lead plans, what matches its goal goes into its prompt; a project's chat agent starts with what matches the plan; both can search with `hm_recall` and keep lessons with `hm_remember`; `hm recall` and `hm remember` do the same from a terminal.
 
 ```toml
 [memory]
@@ -36,5 +36,5 @@ Interactive sessions that succeed are not stored (that is your own work); a sess
 ## Where it shows up
 
 - The lead's prompt, when it starts or reopens, ends with *What the swarm learned before* for its goal.
-- The advisor's system prompt carries what matches your latest message.
+- A project's chat agent starts with what matches the project's plan in its system prompt, and searches with `hm_recall` as you talk.
 - `hm_recall(query, project)` from either; `GET /memory/recall?q=…&project=…` from anything else; `GET /memory` says which backend is on.

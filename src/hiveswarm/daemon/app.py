@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import advisor, db, directives, memory, overlaps, perf, profiles, rulesets, sessions, worktree
+from .. import chat as chat_mod
 from .. import projects as projects_mod
 from ..config import env_secret, load, load_current
 from . import dispatcher
@@ -229,8 +230,17 @@ def advise_route(a: AdviseIn) -> dict[str, Any]:
 
 
 @app.get("/tasks", dependencies=[Depends(_auth)])
-def task_list(project: str | None = None, state: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-    return [dict(r) for r in db.task_list(project, state, limit)]
+def task_list(project: str | None = None, state: str | None = None, limit: int = 50, live: bool = False) -> list[dict[str, Any]]:
+    """The newest tasks. With `live`, every task that has not ended is included however old it is: the app draws its
+    workspaces from this list, and a project's chat agent or lead can be far older than the newest few hundred."""
+    rows = [dict(r) for r in db.task_list(project, state, limit)]
+    if live and not state:
+        have = {r["id"] for r in rows}
+        where = "state NOT IN ('done','failed','abandoned')" + (" AND project = ?" if project else "")
+        extra = db.all_(f"SELECT * FROM tasks WHERE {where} ORDER BY created_at DESC LIMIT 500", *([project] if project else []))
+        rows += [dict(r) for r in extra if r["id"] not in have]
+        rows.sort(key=lambda r: r["created_at"], reverse=True)
+    return rows
 
 
 @app.get("/tasks/{tid}", dependencies=[Depends(_auth)])
@@ -305,12 +315,24 @@ def agents() -> list[dict[str, Any]]:
     rows = [{**dict(a), "capabilities": json.loads(a["capabilities"]), "alive": (now - a["last_seen"]) < 120,
              "busy": busy.get(a["agent_id"], 0), "local": False}
             for a in db.agents_all() if not (a["last_seen"] == 0 and (a["capacity"] or 0) == 0)]  # retired on purpose
+    for r in rows:
+        if r.get("profile") == sessions.CHAT_PROFILE:
+            r["desired_capacity"] = _chat_lanes(r["agent_id"])
     return rows + _hub_lanes(busy, now)
+
+
+def _chat_lanes(agent_id: str) -> int:
+    """Lanes a chat agent table should run: one per chat agent that is open plus a spare, so the next one (a fresh
+    Home chat after this one joined a project) starts at once. The worker sizes itself to this like to any count
+    set from the app."""
+    return max(2, min(32, sessions.chats_live(agent_id) + 1))
 
 
 @app.post("/register", dependencies=[Depends(_auth)])
 def register(r: Register) -> dict[str, Any]:
     row = db.agent_register(r.agent_id, r.host, r.capabilities, r.capacity, r.provider, r.model, r.effort, r.configured, r.profile)
+    if r.profile == sessions.CHAT_PROFILE:
+        return {"ok": True, "desired_capacity": _chat_lanes(r.agent_id)}
     return {"ok": True, "desired_capacity": row["desired_capacity"] if row else None}
 
 
@@ -324,6 +346,9 @@ def agent_capacity(agent_id: str, c: CapacityIn) -> dict[str, Any]:
                                                     f"([workers.{agent_id}]); it runs one lane and has no live count")
     if c.capacity is not None and not (0 <= c.capacity <= 32):
         raise HTTPException(status_code=400, detail="capacity must be between 0 and 32 lanes")
+    cur = db.one("SELECT profile FROM agents WHERE agent_id = ?", agent_id)
+    if cur and cur["profile"] == sessions.CHAT_PROFILE:
+        raise HTTPException(status_code=400, detail=f"{agent_id} is the chat agent; it runs one lane per open chat plus a spare")
     row = db.agent_set_desired_capacity(agent_id, c.capacity)
     if row is None:
         raise HTTPException(status_code=404, detail="no such agent")
@@ -388,6 +413,12 @@ def complete(c: Complete) -> dict[str, Any]:
     cls = dict(cls_row) if cls_row else None
     agent = t["claimed_by"] or "unknown"
 
+    if t["kind"] == "session" and (sessions.get(c.task_id) or {}).get("role") == "chat":
+        ok = c.outcome == "pass"
+        db.attempt_finish(c.attempt_id, "pass" if ok else "error", verifier_log=c.log)
+        db.task_set_state(c.task_id, "done" if ok else "failed", claimed_by=None, lease_expires=None)
+        db.log_append(c.task_id, "daemon", "chat agent closed" if ok else f"chat agent stopped with an error: {(c.log or '')[:200]}")
+        return {"ok": True, "verified": False, "state": "done" if ok else "failed"}
     if c.outcome == "pass" and not c.branch and t["kind"] == "session" and (sessions.get(c.task_id) or {}).get("lead"):
         db.attempt_finish(c.attempt_id, "pass", verifier_log=c.log)
         db.task_set_state(c.task_id, "done", claimed_by=None, lease_expires=None)
@@ -550,13 +581,13 @@ def project_profile(name: str) -> dict[str, Any]:
     return {"project": name, "profile": r["name"] if r else None, "started": n > 0, "task_count": n, "locked": n > 0, "resolved": r}
 
 
-# ── profiles: which models lead, chat and code, saved in config.toml ──
+# ── profiles: which models lead and code, saved in config.toml ──
 
 class ProfileIn(BaseModel):
     name: str
     note: str | None = None
     lead: dict[str, Any] = {}
-    chat: dict[str, Any] = {}
+    chat: dict[str, Any] | None = None  # accepted from 0.3 clients and ignored: the chat agent is not part of a profile
     coders: list[dict[str, Any]] = []
 
 
@@ -568,7 +599,7 @@ def _profile_view(cfg: Any, name: str, p: dict[str, Any]) -> dict[str, Any]:
         coders.append({"key": key, "agent_id": c["adapter"] if hub else profiles.coder_id(name, key), "hub": hub, **c})
     return {"name": name, "note": p.get("note") or "", "error": p.get("error"),
             "lead": {"agent_id": profiles.lead_id(name), **p["lead"]} if p.get("lead") else None,
-            "chat": p.get("chat") or None, "coders": coders,
+            "coders": coders, "default": profiles.default_profile(cfg) == name,
             "used_by": used, "locked": any(u["started"] for u in used)}
 
 
@@ -592,7 +623,7 @@ def profile_set(b: ProfileIn) -> dict[str, Any]:
     from ..config import config_path
     cfg = load_current()
     try:
-        new = profiles.normalize(b.name, {"note": b.note, "lead": b.lead, "chat": b.chat, "coders": b.coders})
+        new = profiles.normalize(b.name, {"note": b.note, "lead": b.lead, "coders": b.coders})
     except profiles.ProfileError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     current = profiles.get(cfg, b.name)
@@ -643,7 +674,7 @@ def deferred_resolve(did: str, body: DeferredResolve) -> dict[str, Any]:
     return {"ok": True, "item": dict(row)}
 
 
-# ── plan, pause, briefs (the advisor and the lead share these) ───────────
+# ── plan, pause, briefs (the chat agent and the lead share these) ────────
 
 class PlanIn(BaseModel):
     text: str
@@ -704,11 +735,14 @@ def brief_create(name: str, body: BriefIn) -> dict[str, Any]:
     sent_to = None
     if lead:
         s = lead["session"]
-        if s.get("host") and lead["state"] in ("claimed", "running") and s.get("turn") in ("idle", "waiting", None) and not s.get("attention"):
+        asking = (s.get("attention") or {}).get("kind") in ("permission", "question", "usage_limit")  # typing would answer it
+        if s.get("host") and lead["state"] in ("claimed", "running") and s.get("turn") in ("idle", "waiting", None) and not asking:
             sessions.enqueue_command(lead["id"], "send", {"text": advisor.brief_text_for_lead(b), "enter": True}, s.get("host"))
             advisor.brief_delivered(b["id"], "terminal")
+            if (s.get("attention") or {}).get("kind") == "input":
+                sessions.update(lead["id"], attention=None, turn="working")
             sent_to = lead["id"]
-        db.log_append(lead["id"], "daemon", f"brief from {body.by or 'the advisor'}: {body.text.strip().splitlines()[0][:160]}")
+        db.log_append(lead["id"], "daemon", f"brief from {body.by or 'the chat agent'}: {body.text.strip().splitlines()[0][:160]}")
     return {"ok": True, "brief": b, "lead": lead["id"] if lead else None, "sent_to": sent_to}
 
 
@@ -728,69 +762,218 @@ def _live_lead(project: str) -> dict[str, Any] | None:
     return None
 
 
-# ── the advisor ─────────────────────────────────────────────────────────
+# ── the chat agent ──────────────────────────────────────────────────────
 
-class AdvisorTalk(BaseModel):
-    text: str
-
-
-class AdvisorEvent(BaseModel):
-    kind: str  # text | tool | result | status | error
-    text: str
-    ts: float | None = None
+class ChatIn(BaseModel):
+    fresh: bool = False          # Home only: close the chat agent that is open there and start a new one
+    host: str | None = None      # the machine the app runs on; its chat agent is preferred so the terminal is local
 
 
-class AdvisorDone(BaseModel):
-    host: str | None = None
-    claude_session_id: str | None = None
-    error: str | None = None
+class StartProject(BaseModel):
+    name: str
+    brief: str = ""
+    profile: str | None = None
+    repo_path: str | None = None
 
 
-@app.get("/advisor/{name}", dependencies=[Depends(_auth)])
-def advisor_get(name: str, limit: int = 300) -> dict[str, Any]:
-    return {**advisor.state(name), "messages": advisor.messages(name, limit)}
+def _chat_agent(host: str | None) -> str:
+    """The agent table a chat session runs on: the chat agent of the app's machine, else any that is alive, else
+    the id that machine's worker will register (the session then waits for it)."""
+    rows = [a for a in db.agents_alive() if a["profile"] == sessions.CHAT_PROFILE]
+    for a in rows:
+        if host and a["host"] == host:
+            return a["agent_id"]
+    if rows:
+        return rows[0]["agent_id"]
+    return sessions.chat_agent_id(host or "")
 
 
-@app.post("/advisor/{name}/talk", dependencies=[Depends(_auth)])
-def advisor_talk(name: str, body: AdvisorTalk) -> dict[str, Any]:
-    """Say something to the project's advisor. A worker with Claude Code runs the turn; its answer streams into
-    the conversation (GET /advisor/{name})."""
-    text = body.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="nothing to say")
-    if name not in (load_current().raw.get("projects") or {}):
+def _chat_view(t: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    s = sessions.get(t["id"]) or {}
+    return {"id": t["id"], "project": None if t["project"] == sessions.HOME else t["project"], "state": t["state"],
+            "agent": s.get("agent"), "host": s.get("host"), "tmux": s.get("tmux"), **extra}
+
+
+def _chat_create(project: str, host: str | None, repo: str = "") -> dict[str, Any]:
+    cfg = load_current()
+    role = profiles.chat_role(cfg)
+    name = "chat" if project == sessions.HOME else f"chat-{project}"[:40]
+    tid = sessions.create(project, "Chat agent", None, repo, "HEAD", _chat_agent(host), "auto", name=name,
+                          origin="app", persistent=True, role="chat", model=role.get("model"), effort=role.get("effort"))
+    dispatcher.route_now(tid)
+    return dict(db.task_get(tid))
+
+
+def _chat_close(t: dict[str, Any], why: str) -> None:
+    att = db.attempt_latest(t["id"])
+    if att and not att["outcome"]:
+        db.attempt_finish(att["id"], "abandoned", verifier_log=why)
+    db.task_set_state(t["id"], "abandoned", claimed_by=None, lease_expires=None)
+    host = _session_host(t["id"])
+    sessions.update(t["id"], attention=None, turn="exited")
+    sessions.enqueue_command(t["id"], "kill", {}, host)
+    db.log_append(t["id"], "daemon", why)
+
+
+@app.post("/chats/home", dependencies=[Depends(_auth)])
+def chat_home(b: ChatIn) -> dict[str, Any]:
+    """The chat agent that belongs to no project: the one that is open, or a new one. `fresh` closes what is open
+    first, which is what the app asks for when it launches, so a chat that never started a project leaves nothing."""
+    for t in sessions.chats(sessions.HOME, include_ended=True):  # a Home chat that ended leaves nothing behind
+        if t["state"] in sessions.ENDED and t["updated_at"] < db.now() - 120:
+            db.task_delete(t["id"])
+    live = sessions.chats(sessions.HOME)
+    if live and not b.fresh:
+        return _chat_view(live[0], created=False)
+    for t in live:
+        _chat_close(t, "closed: the app opened with a fresh chat agent")
+    return _chat_view(_chat_create(sessions.HOME, b.host), created=True)
+
+
+@app.post("/chats/project/{name}", dependencies=[Depends(_auth)])
+def chat_project(name: str, b: ChatIn) -> dict[str, Any]:
+    """A project's chat agent: the one that is open; else the last one, reopened with its conversation; else a new
+    one that starts inside the project."""
+    cfg = load_current()
+    if name not in (cfg.raw.get("projects") or {}):
         raise HTTPException(status_code=404, detail="no such project")
-    if not any("sessions" in json.loads(a["capabilities"] or "[]") and (a["provider"] or a["agent_id"]) == "claude_code" for a in db.agents_alive()):
-        raise HTTPException(status_code=409, detail="no worker with Claude Code is alive to run the advisor")
-    turn = advisor.turn_add(name, text)
-    advisor.message_add(name, "you", text, turn_id=turn)
-    return {"ok": True, "turn": turn}
+    live = sessions.find_chat(name)
+    if live:
+        return _chat_view(live, created=False, reopened=False)
+    ended = sessions.find_chat(name, include_ended=True)
+    if ended and ended["session"].get("claude_session_id"):
+        tid = ended["id"]
+        role = profiles.chat_role(cfg)
+        db.run("UPDATE tasks SET attempts = 0 WHERE id = ?", tid)
+        sessions.drop_untaken_commands(tid)
+        sessions.update(tid, turn="starting", attention=None, tmux=None, unread=0, resume=True, agent=_chat_agent(b.host),
+                        model=role.get("model"), effort=role.get("effort"))
+        db.task_set_state(tid, "classified", claimed_by=None, lease_expires=None)
+        db.log_append(tid, "daemon", "chat agent reopened with its conversation")
+        dispatcher.route_now(tid)
+        return _chat_view(dict(db.task_get(tid)), created=False, reopened=True)
+    for t in sessions.chats(name, include_ended=True):  # ones that ended before Claude Code ever started: nothing to resume
+        db.task_delete(t["id"])
+    return _chat_view(_chat_create(name, b.host, cfg.project(name).get("repo_path") or ""), created=True, reopened=False)
 
 
-@app.post("/advisor/turns/{turn}/events", dependencies=[Depends(_auth)])
-def advisor_events(turn: str, body: AdvisorEvent) -> dict[str, Any]:
-    r = db.one("SELECT project FROM advisor_turns WHERE id = ?", turn)
-    if r is None:
-        raise HTTPException(status_code=404, detail="no such turn")
-    advisor.message_add(r["project"], "advisor", body.text, kind=body.kind, turn_id=turn, ts=body.ts)
-    return {"ok": True}
+@app.get("/chats/{tid}/prompt", dependencies=[Depends(_auth)])
+def chat_prompt(tid: str) -> dict[str, Any]:
+    """The system prompt a worker appends when it starts this chat agent, built from what the hub knows now."""
+    t = db.task_get(tid)
+    s = sessions.get(tid) if t else None
+    if not t or not s or s.get("role") != "chat":
+        raise HTTPException(status_code=404, detail="no such chat agent")
+    cfg = load_current()
+    if t["project"] == sessions.HOME:
+        text = chat_mod.home_prompt(_profile_briefs(cfg), profiles.default_profile(cfg), sorted((cfg.raw.get("projects") or {}).keys()))
+    else:
+        plan = advisor.plan_get(t["project"])
+        learned = memory.prompt_block(memory.recall(plan["text"][:300] if plan else t["project"], t["project"], 6)) if memory.enabled() else ""
+        text = chat_mod.project_prompt(t["project"], plan["text"] if plan else None, advisor.paused(t["project"]), learned)
+    return {"id": tid, "project": None if t["project"] == sessions.HOME else t["project"], "system_prompt": text}
 
 
-@app.post("/advisor/turns/{turn}/done", dependencies=[Depends(_auth)])
-def advisor_done(turn: str, body: AdvisorDone) -> dict[str, Any]:
-    r = advisor.turn_done(turn, body.host, body.claude_session_id, body.error)
-    if r is None:
-        raise HTTPException(status_code=404, detail="no such turn")
-    if body.error:
-        advisor.message_add(r["project"], "advisor", body.error, kind="error", turn_id=turn)
-    return {"ok": True}
+def _profile_briefs(cfg: Any) -> list[dict[str, Any]]:
+    """Each saved profile as one line (`lead claude_code opus max · codex ×2`), for the chat agent and hm_profiles."""
+    out = []
+    for n, p in profiles.listing(cfg).items():
+        if p.get("error"):
+            continue
+        line = profiles.describe({"name": n, "lead": p.get("lead"), "coders": list((p.get("coders") or {}).values())}).split(": ", 1)[1]
+        out.append({"name": n, "summary": line + (f" ({p['note']})" if p.get("note") else ""), "default": profiles.default_profile(cfg) == n})
+    return out
 
 
-@app.delete("/advisor/{name}", dependencies=[Depends(_auth)])
-def advisor_forget(name: str) -> dict[str, Any]:
-    """Start the advisor's conversation over (its Claude session and the messages are dropped; the plan stays)."""
-    advisor.forget(name)
-    return {"ok": True}
+@app.post("/chats/{tid}/start_project", dependencies=[Depends(_auth)])
+def chat_start_project(tid: str, b: StartProject) -> dict[str, Any]:
+    """A Home chat agent starts a project: create it (or take an existing one that has no chat agent), give it its
+    profile, move this chat session into it and start its lead with the brief. A chat agent does this once."""
+    from .. import tomledit
+    from ..config import config_path
+    t = db.task_get(tid)
+    s = sessions.get(tid) if t else None
+    if not t or not s or s.get("role") != "chat":
+        raise HTTPException(status_code=404, detail="no such chat agent")
+    if t["project"] != sessions.HOME:
+        raise HTTPException(status_code=409, detail=f"this chat agent belongs to project {t['project']}; the human starts "
+                                                    "another project from the chat agent at Home")
+    if t["state"] in sessions.ENDED:
+        raise HTTPException(status_code=409, detail="this chat agent has ended")
+    name = b.name.strip()
+    cfg = load_current()
+    existing = name in (cfg.raw.get("projects") or {})
+    if existing and sessions.find_chat(name):
+        raise HTTPException(status_code=409, detail=f"project {name} already has a chat agent; the human opens its workspace "
+                                                    "from the Control tab or with Ctrl+Shift+1..9")
+    want = (b.profile or "").strip() or None
+    if want and want not in profiles.listing(cfg):
+        raise HTTPException(status_code=400, detail=f"no profile named {want}; hm_profiles lists them")
+    if not existing:
+        made = _project_create(name, b.repo_path)
+        repo = made["repo_path"]
+        cfg = load_current()
+    else:
+        repo = cfg.project(name).get("repo_path") or ""
+    current = cfg.project(name).get("profile") or None
+    profile = current
+    if not profiles.started(name):
+        profile = want or current or profiles.default_profile(cfg)
+        if profile != current:
+            tomledit.update_section(config_path(), f"projects.{name}", {"profile": profile, "lanes": None, "agents": None} if profile else {"profile": None})
+            load.cache_clear()
+    elif want and want != current:
+        raise HTTPException(status_code=409, detail=f"{name} has started on {current or 'any agent'}; its profile cannot change")
+    db.run("UPDATE tasks SET project = ?, repo_path = ?, updated_at = ? WHERE id = ?", name, repo, db.now(), tid)
+    sessions.update(tid, name=f"chat-{name}"[:40])
+    db.log_append(tid, "daemon", f"chat agent joined project {name}" + ("" if existing else " (created)") + (f" on profile {profile}" if profile else ""))
+    brief = b.brief.strip()
+    lead = lead_get_or_create(LeadIn(project=name, message=brief or None))
+    return {"ok": True, "project": name, "created": not existing, "profile": profile, "repo_path": repo, "chat": tid,
+            "lead": lead, "instructions": chat_mod.bound_instructions(name, profile, lead["id"], existing)}
+
+
+# ── app-wide settings (config.toml on the hub) ──────────────────────────
+
+class SettingsIn(BaseModel):
+    default_profile: str | None = None       # "" clears it
+    chat_model: str | None = None            # "" for Claude Code's own default
+    chat_effort: str | None = None
+
+
+@app.get("/settings", dependencies=[Depends(_auth)])
+def settings_get() -> dict[str, Any]:
+    from ..workers import adapters
+    cfg = load_current()
+    role = profiles.chat_role(cfg)
+    return {"default_profile": profiles.default_profile(cfg), "chat": {"model": role.get("model"), "effort": role.get("effort"),
+                                                                       "error": role.get("error")},
+            "chat_efforts": list(adapters.EFFORTS.get("claude_code") or [])}
+
+
+@app.post("/settings", dependencies=[Depends(_auth)])
+def settings_set(b: SettingsIn) -> dict[str, Any]:
+    from .. import tomledit
+    from ..config import config_path
+    from ..workers import adapters
+    cfg = load_current()
+    if b.default_profile is not None:
+        name = b.default_profile.strip() or None
+        if name and name not in profiles.listing(cfg):
+            raise HTTPException(status_code=400, detail=f"no profile named {name}")
+        tomledit.update_section(config_path(), "defaults", {"profile": name})
+    chat: dict[str, Any] = {}
+    if b.chat_model is not None:
+        chat["model"] = b.chat_model.strip() or None
+    if b.chat_effort is not None:
+        effort = b.chat_effort.strip() or None
+        if effort and effort not in (adapters.EFFORTS.get("claude_code") or []):
+            raise HTTPException(status_code=400, detail="effort for the chat agent is one of " + ", ".join(adapters.EFFORTS.get("claude_code") or []))
+        chat["effort"] = effort
+    if chat:
+        tomledit.update_section(config_path(), "chat", chat)
+    load.cache_clear()
+    return settings_get()
 
 
 # ── memory ──────────────────────────────────────────────────────────────
@@ -860,8 +1043,8 @@ def project_delete(name: str, purge: bool = False) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"no project '{name}'")
 
 
-@app.post("/projects", dependencies=[Depends(_auth)])
-def project_add(p: ProjectAdd) -> dict[str, Any]:
+def _project_create(name: str, repo_path: str | None = None, verify_image: str | None = None,
+                    acceptance_templates: list[str] | None = None) -> dict[str, Any]:
     import os
     import re
     import subprocess
@@ -870,14 +1053,14 @@ def project_add(p: ProjectAdd) -> dict[str, Any]:
 
     from ..config import config_path, load_fresh
 
-    name = p.name.strip()
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
-        raise HTTPException(status_code=400, detail="project name: letters, digits, - and _ only")
+    name = name.strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+        raise HTTPException(status_code=400, detail="project name: letters, digits, - and _ only, starting with a letter or digit")
     cfg = load_fresh()
     if name in (cfg.raw.get("projects") or {}):
         raise HTTPException(status_code=409, detail=f"project '{name}' already exists")
     root = Path(os.path.expanduser(cfg.get("paths.projects_root", "~/repos")))
-    repo = Path(os.path.expanduser(p.repo_path)) if p.repo_path else root / name
+    repo = Path(os.path.expanduser(repo_path)) if repo_path else root / name
     created = False
     if (repo / ".git").exists():
         pass
@@ -891,10 +1074,10 @@ def project_add(p: ProjectAdd) -> dict[str, Any]:
             if r.returncode != 0:
                 raise HTTPException(status_code=500, detail=f"git {' '.join(args[:2])} failed: {r.stderr.strip()[:300]}")
         created = True
-    image = p.verify_image or cfg.get("verify.default_image", "python:3.12-slim")
+    image = verify_image or cfg.get("verify.default_image", "python:3.12-slim")
     block = f'[projects.{name}]\nrepo_path = "{repo}"\nverify_image = "{image}"\n'
-    if p.acceptance_templates:
-        block += f"acceptance_templates = {json.dumps(p.acceptance_templates)}\n"
+    if acceptance_templates:
+        block += f"acceptance_templates = {json.dumps(acceptance_templates)}\n"
     from .. import tomledit
     path = config_path()
     text = path.read_text()
@@ -903,6 +1086,27 @@ def project_add(p: ProjectAdd) -> dict[str, Any]:
     tomledit.atomic_write(path, new)
     load.cache_clear()
     return {"ok": True, "name": name, "repo_path": str(repo), "created": created, "verify_image": image}
+
+
+@app.post("/projects", dependencies=[Depends(_auth)])
+def project_add(p: ProjectAdd) -> dict[str, Any]:
+    return _project_create(p.name, p.repo_path, p.verify_image, p.acceptance_templates)
+
+
+def _session_coder(cfg: Any, project: str, wanted: str) -> str | None:
+    """The coder of a project's profile that an interactive session should run on."""
+    r = profiles.for_project(cfg, project)
+    coders = [c for c in (r or {}).get("coders") or [] if not c["hub"] and c["count"] > 0]
+    if not coders:
+        return None
+    alive = {a["agent_id"] for a in db.agents_alive()}
+    caps = db.agent_capacities()
+    busy = db.busy_counts()
+
+    def free(c: dict[str, Any]) -> int:
+        return (caps.get(c["agent_id"], 0) - busy.get(c["agent_id"], 0)) if c["agent_id"] in alive else -1
+    same = [c for c in coders if c["adapter"] == wanted]
+    return max(same or coders, key=free)["agent_id"]
 
 
 @app.post("/sessions", dependencies=[Depends(_auth)])
@@ -915,8 +1119,15 @@ def session_add(sa: SessionAdd) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"permission_mode must be one of {sessions.PERMISSION_MODES}")
     agent = sa.agent
     pcfg = load_current()
-    if sa.agent not in profiles.agent_ids(pcfg, sa.project):
-        agent = profiles.lead_agent(pcfg, sa.project) or sa.agent  # a profiled project's sessions run on its lead agent
+    lead_agent = profiles.lead_agent(pcfg, sa.project)
+    if lead_agent:
+        # A profiled project's lead runs on the profile's lead agent, which has one lane and the lead is in it. An
+        # agent the lead spawns in its own terminal runs on one of the profile's coders: the one asked for, else the
+        # one behind the CLI that was named, else the one with the most free lanes.
+        if sa.lead:
+            agent = lead_agent
+        elif sa.agent == lead_agent or sa.agent not in profiles.agent_ids(pcfg, sa.project):
+            agent = _session_coder(pcfg, sa.project, sa.agent) or lead_agent
     ids = []
     for i in range(max(1, min(sa.count, 12))):
         name = sa.name if (sa.name and sa.count == 1) else None
@@ -948,6 +1159,7 @@ def lead_get_or_create(b: LeadIn) -> dict[str, Any]:
         if ended["worktree"]:
             worktree.remove(tid, ended["repo_path"])
         db.run("UPDATE tasks SET attempts = 0, worktree = NULL WHERE id = ?", tid)
+        sessions.drop_untaken_commands(tid)
         sessions.update(tid, turn="starting", attention=None, tmux=None, unread=0, resume=True,
                         resume_note=(b.message or "").strip())
         db.task_set_state(tid, "pending", claimed_by=None, lease_expires=None)
@@ -995,8 +1207,8 @@ def session_list(project: str | None = None, limit: int = 100) -> list[dict[str,
 
 @app.get("/sessions/commands", dependencies=[Depends(_auth)])
 async def session_commands(request: Request, host: str, wait: float = 0, advisor_ok: bool = False) -> dict[str, Any]:
-    """Commands for the sessions on `host`, long-polled. A host that can run Claude Code headless passes
-    advisor_ok and also receives advisor turns (one per project at a time)."""
+    """Commands for the sessions on `host`, long-polled. (`advisor_ok` and the empty `advisor` list are what a 0.3
+    worker still sends and reads; the headless advisor is gone, the chat agent is a session like any other.)"""
     import asyncio
     import time as _time
     deadline = _time.time() + min(max(wait, 0), 25)
@@ -1004,16 +1216,8 @@ async def session_commands(request: Request, host: str, wait: float = 0, advisor
         if await request.is_disconnected():
             return {"commands": [], "advisor": []}
         cmds = await asyncio.to_thread(sessions.take_commands, host)
-        turns = await asyncio.to_thread(advisor.turn_take, host) if advisor_ok else []
-        for t in turns:
-            plan = advisor.plan_get(t["project"])
-            learned = memory.prompt_block(memory.recall(t["text"], t["project"], 6)) if memory.enabled() else ""
-            t["system_prompt"] = advisor.system_prompt(t["project"], plan["text"] if plan else None, advisor.paused(t["project"]), learned)
-            prof = profiles.for_project(load_current(), t["project"])
-            if prof and prof.get("chat"):
-                t["model"], t["effort"] = prof["chat"].get("model"), prof["chat"].get("effort")
-        if cmds or turns or _time.time() >= deadline:
-            return {"commands": cmds, "advisor": turns}
+        if cmds or _time.time() >= deadline:
+            return {"commands": cmds, "advisor": []}
         await asyncio.sleep(0.5)
 
 
@@ -1038,6 +1242,13 @@ def session_get(tid: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="no such session")
     return {"task": dict(t), "session": sessions.get(tid), "commands": sessions.commands_for(tid, 10),
             "attempts": [dict(a) for a in db.attempts_for(tid)]}
+
+
+def _adapter_of(agent_id: str) -> str:
+    """The CLI behind an agent id (`deep-lead` and `chat-laptop` run claude_code), which decides the keys that
+    approve and deny in its terminal."""
+    r = db.one("SELECT provider FROM agents WHERE agent_id = ?", agent_id)
+    return (r["provider"] if r and r["provider"] else None) or agent_id
 
 
 def _session_host(tid: str) -> str | None:
@@ -1081,7 +1292,7 @@ def session_send(tid: str, body: SessionSend) -> dict[str, Any]:
 def session_answer(tid: str, body: SessionAnswer) -> dict[str, Any]:
     s = _live_session(tid)
     att = s.get("attention") or {}
-    agent = s.get("agent") or "claude_code"
+    agent = _adapter_of(s.get("agent") or "claude_code")
     cfg = load()
     cfg_keys = (cfg.get(f"sessions.keys.{agent}") or {})
     if att.get("kind") == "question" and body.choice in ("approve", "deny"):
@@ -1165,16 +1376,20 @@ def session_event(tid: str, ev: SessionEvent) -> dict[str, Any]:
             fields[k] = v
     decision: dict[str, Any] = {}
     if ev.kind == "started":
-        fields.update(turn="working", started_at=db.now(), attention=None)
+        # a chat agent opens at its own prompt and waits; everything else starts on the task it was given
+        fields.update(turn="idle" if s.get("role") == "chat" else "working", started_at=db.now(), attention=None)
         db.log_append(tid, f"{agent}:status", ev.summary or f"session started in tmux {ev.tmux or ''}".strip())
     elif ev.kind == "turn":
         turn = ev.turn or "working"
         fields["turn"] = turn
         if turn == "idle":
             fields["turns"] = int(s.get("turns", 0)) + 1
-            fields["attention"] = {"kind": "input", "summary": ev.summary or "finished its turn and is waiting for you",
-                                   "since": db.now()}
-            db.log_append(tid, f"{agent}:status", "turn finished — waiting for your input")
+            if s.get("role") == "chat":  # a chat agent at its prompt is not something that needs you
+                fields["attention"] = None
+            else:
+                fields["attention"] = {"kind": "input", "summary": ev.summary or "finished its turn and is waiting for you",
+                                       "since": db.now()}
+                db.log_append(tid, f"{agent}:status", "turn finished — waiting for your input")
         elif turn == "working":
             if (s.get("attention") or {}).get("kind") in ("input",):
                 fields["attention"] = None
@@ -1190,7 +1405,8 @@ def session_event(tid: str, ev: SessionEvent) -> dict[str, Any]:
         risk, source = sessions.classify_risk(agent, ev.tool or "tool", cmd or summary)
         if sessions.auto_approve_allowed(agent, s.get("permission_mode", "auto"), risk):
             if not ev.can_decide:
-                keys = sessions.keys_for(agent, "approve", load().get(f"sessions.keys.{agent}") or {})
+                cli = _adapter_of(agent)
+                keys = sessions.keys_for(cli, "approve", load().get(f"sessions.keys.{cli}") or {})
                 sessions.enqueue_command(tid, "keys", {"keys": keys}, s.get("host"))
             fields["auto_approved"] = int(s.get("auto_approved", 0)) + 1
             fields["turn"] = "working"
@@ -1409,7 +1625,7 @@ def task_merge(tid: str, acknowledge_untested: bool = False) -> dict[str, Any]:
     if t["state"] != "done":
         return {"ok": False, "reason": "only done tasks can be merged"}
     if advisor.paused(t["project"]):
-        return {"ok": False, "reason": f"project {t['project']} is paused; resume it first (hm_resume or the Lead page)", "paused": True}
+        return {"ok": False, "reason": f"project {t['project']} is paused; resume it first (hm_resume, or ask the chat agent)", "paused": True}
     untested = [f for f in db.flags_get(tid) if f.get("kind") == "untested"]
     if untested and not acknowledge_untested:
         return {"ok": False, "reason": "untested: " + untested[-1].get("summary", "") +

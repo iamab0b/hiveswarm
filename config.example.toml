@@ -88,6 +88,34 @@ silence_minutes = 6         # no output at all for this long does the same
 [routing]
 probation = true            # keep slow or failing agents on easy tasks until their numbers recover
 
+# The chat agent: the terminal the app opens on (docs/chat.md). One model for all of them; leave it out for Claude
+# Code's own default. The Control tab writes this table.
+# [chat]
+# model = "sonnet"
+# effort = "low"
+
+# A profile: which model leads a project and which coders take its tasks, with lanes per coder (docs/profiles.md).
+# The Control tab writes these; one can be the default for projects the chat agent starts.
+# [profiles.deep]
+# note = "Opus leads and reviews, two Opus medium lanes, Codex for tests"
+# [profiles.deep.lead]
+# adapter = "claude_code"
+# model = "opus"
+# effort = "max"
+# [profiles.deep.coders.claude-opus-medium]
+# adapter = "claude_code"
+# model = "opus"
+# effort = "medium"
+# count = 2
+# [profiles.deep.coders.codex-gpt-5-5-high]
+# adapter = "codex"
+# model = "gpt-5.5"
+# effort = "high"
+# count = 1
+#
+# [defaults]
+# profile = "deep"
+
 [projects.example]
 repo_path = "~/hiveswarm/repos/example"
 verify_image = "python:3.12-slim"

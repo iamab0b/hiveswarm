@@ -50,6 +50,17 @@ function createWindow() {
     },
   });
   win.loadURL(bootUrl());
+  // With no menu there is no accelerator for these two; F5 and F12 are keys no agent's terminal uses.
+  win.webContents.on("before-input-event", (ev, input) => {
+    if (input.type !== "keyDown" || input.control || input.alt || input.meta) return;
+    if (input.key === "F5") {
+      ev.preventDefault();
+      win.webContents.reload();
+    } else if (input.key === "F12") {
+      ev.preventDefault();
+      win.webContents.toggleDevTools();
+    }
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url) && !url.startsWith(engine.url)) {
       shell.openExternal(url);
@@ -72,6 +83,17 @@ function createWindow() {
   win.on("closed", () => {
     win = null;
   });
+}
+
+/** The window is a terminal first, and a terminal owns the keyboard. Electron's default menu would take keys the
+ *  agents need (Ctrl+W closes the window, Ctrl+R reloads the page), so Windows and Linux get no menu at all; macOS
+ *  keeps the menus whose shortcuts use Cmd. */
+function setAppMenu() {
+  if (process.platform === "darwin") {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }]));
+  } else {
+    Menu.setApplicationMenu(null);
+  }
 }
 
 function showApp() {
@@ -190,6 +212,7 @@ if (!gotLock) {
     ipcMain.handle("engine:openLog", () => openEngineLog());
     ipcMain.handle("engine:openExternal", (_ev, url) => shell.openExternal(url));
 
+    setAppMenu();
     createWindow();
     buildTray();
     boot();

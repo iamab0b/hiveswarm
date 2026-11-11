@@ -106,14 +106,16 @@ def test_env_var_compat_shim(tmp_path):
 
 @pytest.mark.e2e
 def test_web_app_renders(page):
-    """The packaged app serves and its pages render (needs `playwright install chromium`)."""
+    """The packaged app serves and its two tabs render (needs `playwright install chromium`)."""
     page.goto(page.base + "/", wait_until="load")
     page.wait_for_timeout(2500)
-    assert page.locator("text=Swarm").first.is_visible()
-    page.goto(page.base + "/stats", wait_until="load")
+    assert page.locator("header [data-tab=terminals]").is_visible() and page.locator("header [data-tab=control]").is_visible()
+    assert page.locator("[data-workspace=_home]").count() == 1, "the app opens on the Home workspace"
+    page.goto(page.base + "/control", wait_until="load")
     page.wait_for_timeout(2000)
-    assert page.locator("h1", has_text="Stats").first.is_visible()
-    assert page.locator("text=pass rate, wall time").first.is_visible()
-    page.goto(page.base + "/lead/demo", wait_until="load")
+    assert page.locator("h1", has_text="Control").first.is_visible()
+    assert page.locator("[data-stats]").count() == 1 and page.locator("[data-feed]").count() == 1
+    page.goto(page.base + "/p/demo", wait_until="load")
     page.wait_for_timeout(2000)
-    assert page.locator("text=Lead").first.is_visible()
+    assert page.locator("[data-workspace=demo]").count() == 1
+    assert not page.errors

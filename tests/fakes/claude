@@ -157,64 +157,6 @@ def edit_file(what):
     open("add.py", "w").write(src)
 
 
-if headless and opts["mcp-config"] and "HIVESWARM_ROLE" in opts["mcp-config"]:
-    # ── the advisor: a headless turn with the hiveswarm MCP server in its advisor role ──
-    import asyncio
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
-    cfg = json.loads(opts["mcp-config"])["mcpServers"]["hiveswarm"]
-    sid = opts["resume"] or str(uuid.uuid4())
-
-    def jout(obj):
-        print(json.dumps(obj), flush=True)
-
-    def say_text(text):
-        jout({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
-
-    def call(name, args):
-        jout({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": f"mcp__hiveswarm__{name}", "input": args}]}})
-
-    async def advise():
-        params = StdioServerParameters(command=cfg["command"], args=cfg.get("args", []), env={**os.environ, **cfg.get("env", {})})
-        async with stdio_client(params) as (r, w):
-            async with ClientSession(r, w) as s:
-                await s.initialize()
-                names = {t.name for t in (await s.list_tools()).tools}
-                assert "hm_add_tasks" not in names and "hm_pause" in names, names
-
-                def text(res):
-                    return "\n".join(c.text for c in res.content if getattr(c, "text", None))
-
-                jout({"type": "system", "subtype": "init", "model": opts["model"] or "claude-sonnet-5", "session_id": sid,
-                      "resumed": bool(opts["resume"]), "system_prompt_chars": len(opts["append-system-prompt"] or "")})
-                m = re.search(r"\bproject[`\s]+([A-Za-z0-9_-]+)", opts["append-system-prompt"] or "")
-                project = m.group(1) if m else "demo"
-                low = prompt.lower()
-                call("hm_status", {})
-                st = text(await s.call_tool("hm_status", {}))
-                jout({"type": "user", "message": {"content": [{"type": "tool_result", "content": st[:200]}]}})
-                if low.startswith("plan:"):
-                    call("hm_plan", {"project": project, "text": prompt[5:].strip()})
-                    text(await s.call_tool("hm_plan", {"project": project, "text": prompt[5:].strip()}))
-                    say_text(f"1. Plan saved ({'resumed' if opts['resume'] else 'fresh'} session).\n\nState: swarm running; nothing waits on you.\n\nNext: say \"pause\" if the lead should change course.")
-                elif "pause" in low or "change course" in low:
-                    call("hm_pause", {"project": project, "reason": prompt[:80]})
-                    text(await s.call_tool("hm_pause", {"project": project, "reason": prompt[:80]}))
-                    brief = ("What happened: the human changed the plan.\nWhat is in flight: see hm_list.\nWaiting on: nothing.\n"
-                             f"The human's update: {prompt.strip()}\nHow to proceed: adjust the plan, then hm_resume.")
-                    call("hm_brief", {"project": project, "text": brief})
-                    text(await s.call_tool("hm_brief", {"project": project, "text": brief}))
-                    say_text("1. Paused the project; no new task starts.\n2. Briefed the lead; it resumes once it has read it.\n\nState: paused, agents in flight finish their work.\n\nNext: watch the Lead pane for its reply.")
-                else:
-                    call("hm_plan_get", {"project": project})
-                    plan = json.loads(text(await s.call_tool("hm_plan_get", {"project": project})))
-                    have = "yes" if plan.get("plan") else "no plan saved yet"
-                    say_text(f"1. Plan on file: {have}.\n2. {'Resumed' if opts['resume'] else 'Fresh'} session; you said: {prompt.strip()[:60]}\n\nState: swarm running.\n\nNext: tell me what to change, or say \"plan: ...\" to save one.")
-    asyncio.run(advise())
-    print(json.dumps({"type": "result", "subtype": "success", "num_turns": 2, "duration_ms": 800, "total_cost_usd": 0.002,
-                      "usage": {"input_tokens": 300, "output_tokens": 80}, "result": "ok", "session_id": sid}), flush=True)
-    sys.exit(0)
-
 if headless:
     def jout(obj):
         print(json.dumps(obj), flush=True); time.sleep(step / 2)
@@ -258,6 +200,102 @@ if headless:
                       "usage": {"input_tokens": 900, "output_tokens": 220}, "result": "Done."}), flush=True)
     sys.exit(0)
 
+MCP_ENV = {}
+if opts["mcp-config"]:
+    try:
+        MCP_ENV = json.loads(opts["mcp-config"])["mcpServers"]["hiveswarm"].get("env", {})
+    except Exception:
+        MCP_ENV = {}
+
+if MCP_ENV.get("HIVESWARM_ROLE") == "chat":
+    # ── the chat agent: an interactive session at its own prompt, with the hiveswarm MCP server in its chat role ──
+    import asyncio
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    cfg = json.loads(opts["mcp-config"])["mcpServers"]["hiveswarm"]
+    sysprompt = opts["append-system-prompt"] or ""
+    m = re.search(r"chat agent of project `([A-Za-z0-9_-]+)`", sysprompt)
+    state = {"project": m.group(1) if m else None}
+    say(f"╭─ Claude Code (fake) · {opts['name'] or ('resumed ' + session_id[:8])} · chat"
+        + (f" · model={opts['model']}" if opts['model'] else "") + (f" · effort={opts['effort']}" if opts['effort'] else "") + " ─╮")
+    say(f"  chat agent {'of ' + state['project'] if state['project'] else 'at Home'} · {'resumed' if opts['resume'] else 'fresh'}"
+        f" · allowed={opts['allowedTools']} · denied={opts['disallowedTools']}")
+    hook("SessionStart", {"source": "resume" if opts["resume"] else "startup"})
+
+    async def chat():
+        params = StdioServerParameters(command=cfg["command"], args=cfg.get("args", []), env={**os.environ, **cfg.get("env", {})})
+        async with stdio_client(params) as (r, w):
+            async with ClientSession(r, w) as s:
+                await s.initialize()
+                names = {t.name for t in (await s.list_tools()).tools}
+                assert "hm_add_tasks" not in names and "hm_merge" not in names, names
+                assert {"hm_start_project", "hm_start_lead", "hm_pause", "hm_brief", "hm_profiles"} <= names, names
+                say(f"  (chat) {len(names)} hiveswarm tools")
+
+                def text(res):
+                    return "\n".join(c.text for c in res.content if getattr(c, "text", None))
+
+                async def call(name, args):
+                    assistant(None, f"mcp__hiveswarm__{name}", args)
+                    res = await s.call_tool(name, args)
+                    out = text(res)
+                    tool_result(out[:300])
+                    return out, bool(getattr(res, "isError", False))
+
+                say("\n> ")
+                while True:
+                    line = sys.stdin.readline()
+                    if not line:
+                        break
+                    msg = line.strip()
+                    if not msg:
+                        continue
+                    user(msg)
+                    low = msg.lower()
+                    if low in ("exit", "/exit"):
+                        break
+                    if low.startswith("start "):
+                        head, _, brief = msg[6:].partition(":")
+                        name, _, profile = head.strip().partition(" on ")
+                        args = {"name": name.strip(), "brief": brief.strip()}
+                        if profile.strip():
+                            args["profile"] = profile.strip()
+                        out, err = await call("hm_start_project", args)
+                        if err or '"ok": true' not in out.replace("True", "true"):
+                            assistant(f"Could not start {name.strip()}: {out[:200]}")
+                        else:
+                            d = json.loads(out)
+                            state["project"] = d["project"]
+                            assistant(f"Started {d['project']} on {d.get('profile') or 'the connected agents'}; the lead {d['lead']['id'][:8]} has the brief.")
+                    elif low == "prompt?":
+                        import hashlib
+                        assistant(f"system prompt: {len(sysprompt)} chars, sha1 {hashlib.sha1(sysprompt.encode()).hexdigest()[:12]}")
+                    elif low == "profiles":
+                        out, _ = await call("hm_profiles", {})
+                        d = json.loads(out)
+                        assistant("Profiles: " + (", ".join(p["name"] + (" (default)" if p["default"] else "") for p in d["profiles"]) or "none"))
+                    elif low.startswith("plan:") and state["project"]:
+                        await call("hm_plan", {"project": state["project"], "text": msg[5:].strip()})
+                        assistant("1. Plan saved.\n\nState: swarm running.")
+                    elif ("pause" in low or "change" in low) and state["project"]:
+                        await call("hm_pause", {"project": state["project"], "reason": msg[:80]})
+                        brief = ("What happened: the human changed the plan.\nWhat is in flight: see hm_list.\nWaiting on: nothing.\n"
+                                 f"The human's update: {msg}\nHow to proceed: adjust the plan, then hm_resume.")
+                        out, _ = await call("hm_brief", {"project": state["project"], "text": brief})
+                        if '"lead": null' in out:
+                            await call("hm_start_lead", {"project": state["project"]})
+                        assistant("1. Paused the project; no new task starts.\n2. Briefed the lead; it resumes once it has read it.")
+                    else:
+                        await call("hm_status", {})
+                        where = f"project {state['project']}" if state["project"] else "Home"
+                        assistant(f"({where}) You said: {msg[:80]}")
+                    hook("Stop", {"stop_hook_active": False})
+                    say("\n> ")
+    asyncio.run(chat())
+    hook("SessionEnd", {"reason": "prompt_input_exit"})
+    say("bye")
+    sys.exit(0)
+
 say(f"╭─ Claude Code (fake) · {opts['name'] or ('resumed ' + session_id[:8])} · mode={opts['permission-mode']}"
     + (f" · model={opts['model']}" if opts['model'] else "") + (f" · effort={opts['effort']}" if opts['effort'] else "") + " ─╮")
 hook("SessionStart", {"source": "startup"})
@@ -270,6 +308,8 @@ if opts["mcp-config"]:
     from mcp.client.stdio import stdio_client
     cfg = json.loads(opts["mcp-config"])["mcpServers"]["hiveswarm"]
     say(f"  (lead) MCP server: {cfg['command']}")
+    _pm = re.search(r"lead for project `([A-Za-z0-9_-]+)`", prompt)
+    PROJECT = _pm.group(1) if _pm else "demo"
 
     async def lead():
         params = StdioServerParameters(command=cfg["command"], args=cfg.get("args", []), env={**os.environ, **cfg.get("env", {})})
@@ -287,17 +327,17 @@ if opts["mcp-config"]:
                     short_req = request.strip().splitlines()[0][:70]
                     planned = [{"spec": f"{short_req} — implement it in add.py"},
                                {"spec": f"{short_req} — cover it in test_add.py"}]
-                    adv = json.loads(text(await s.call_tool("hm_advise", {"project": "demo", "tasks": planned})))
+                    adv = json.loads(text(await s.call_tool("hm_advise", {"project": PROJECT, "tasks": planned})))
                     tool_result(json.dumps(adv)[:300])
                     picks = [(t["agent"] or "claude_code", t["mode"]) for t in adv["tasks"]]
-                    await s.call_tool("hm_plan", {"project": "demo", "text": "## Plan\n1. " + "\n1. ".join(p["spec"] for p in planned) + "\n\nDecisions: none yet."})
+                    await s.call_tool("hm_plan", {"project": PROJECT, "text": "## Plan\n1. " + "\n1. ".join(p["spec"] for p in planned) + "\n\nDecisions: none yet."})
                     shape = ", ".join(f"{p[1]} on {p[0]}" for p in picks)
                     assistant(f"**Swarm plan**: {len(planned)} tasks\n- " + "\n- ".join(f"{p[1]} on `{p[0]}`" for p in picks) + f"\n\n{adv['summary']}")
                     q = ask("Ship it as one wave, or wait for your review after the first task?", ["One wave, go", "Pause after task 1"], header="Plan")
                     tasks = [{"spec": planned[i]["spec"], "acceptance": "python3 -c 'import add'", "agent": picks[i][0]} for i in range(len(planned))]
                     if q.startswith("Pause"):
                         tasks = tasks[:1]
-                    res = json.loads(text(await s.call_tool("hm_add_tasks", {"project": "demo", "tasks": tasks})))
+                    res = json.loads(text(await s.call_tool("hm_add_tasks", {"project": PROJECT, "tasks": tasks})))
                     assistant(f"Dispatched {res['count']} task(s): {', '.join(i[:8] for i in res['ids'])}", "mcp__hiveswarm__hm_wait", {"task_ids": res["ids"]})
                     w1 = json.loads(text(await s.call_tool("hm_wait", {"task_ids": res["ids"], "timeout_seconds": 120})))
                     tool_result(json.dumps(w1)[:300])

@@ -59,3 +59,8 @@ enabled = false
 [agents.opencode]
 adapter = "opencode"
 enabled = false
+
+# The chat agent (docs/chat.md) needs no table: a worker with tmux and a Claude Code table registers `chat-<host>` by itself,
+# with the sign-in and settings of [agents.claude_code], and the hub sizes its lanes. Uncomment to turn it off here.
+# [chat]
+# enabled = false

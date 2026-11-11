@@ -228,7 +228,7 @@ description: The Hiveswarm Craft ruleset every coding agent in a swarm works und
 ## Why the handoff matters
 
 Hiveswarm reads the three sections back. Every Deferred line becomes an entry in the project's deferred ledger
-(`hm_deferred` for the lead, the Lead page for the human) so a shortcut is never silently forgotten. An attempt
+(`hm_deferred` for the lead, the project's settings on the Control tab for the human) so a shortcut is never silently forgotten. An attempt
 that changed code without touching a test and without a real test run in Tested (or in the acceptance command)
 is flagged `untested`: it appears in the inbox and `hm_merge` refuses it until a reviewer acknowledges the risk.
 Writing an honest Tested section is faster than arguing with the flag.

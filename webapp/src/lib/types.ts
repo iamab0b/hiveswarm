@@ -55,6 +55,10 @@ export interface SessionInfo {
   auto_approved?: number;
   lead?: boolean;
   persistent?: boolean;
+  /** "chat" for a chat agent's session (the terminal at Home, or beside a project's lead) */
+  role?: "chat" | null;
+  model?: string | null;
+  effort?: string | null;
   started_at?: number | null;
   continued_from?: string;
   continued_in?: string;
@@ -219,24 +223,56 @@ export interface ProfileCoder extends ProfileRole {
   hub: boolean;
 }
 
-/** A profile as the hub keeps it: which models lead, chat and code, and the projects on it. */
+/** A profile as the hub keeps it: which models lead and code, and the projects on it. */
 export interface SwarmProfile {
   name: string;
   note: string;
   error?: string | null;
   lead: ProfileRole | null;
-  chat: ProfileRole | null;
   coders: ProfileCoder[];
   used_by: { project: string; started: boolean }[];
   locked: boolean;
+  /** the profile a project started from the chat agent gets when none is named */
+  default?: boolean;
 }
 
 export interface ProfileInput {
   name: string;
   note?: string;
   lead: { adapter: string; model?: string | null; effort?: string | null };
-  chat: { model?: string | null; effort?: string | null };
   coders: { adapter: string; model?: string | null; effort?: string | null; count: number }[];
+}
+
+/** App-wide settings kept in the hub's config.toml. */
+export interface AppSettings {
+  default_profile: string | null;
+  chat: { model: string | null; effort: string | null; error?: string | null };
+  chat_efforts: string[];
+}
+
+/** A chat agent's session as POST /chats/home and /chats/project/{name} return it. */
+export interface ChatRef {
+  id: string;
+  project: string | null;
+  state: TaskState;
+  agent?: string | null;
+  host?: string | null;
+  tmux?: string | null;
+  created?: boolean;
+  reopened?: boolean;
+}
+
+/** An agent CLI on the machine running the app: installed or not, signed in or not. */
+export interface Subscription {
+  id: string;
+  label: string;
+  plan: string;
+  binary: string;
+  installed: boolean;
+  signed_in: boolean | null;
+  detail: string;
+  fix: string;
+  tables: string[];
 }
 
 /** A project's profile resolved to agent ids, effective lane counts and live rows. */
@@ -246,7 +282,7 @@ export interface ProjectProfile {
   started: boolean;
   task_count: number;
   locked: boolean;
-  resolved: { name: string; note?: string; error?: string | null; lead: ProfileRole | null; chat: ProfileRole | null; coders: ProfileCoder[] } | null;
+  resolved: { name: string; note?: string; error?: string | null; lead: ProfileRole | null; coders: ProfileCoder[] } | null;
 }
 
 export interface InboxItem {
@@ -310,27 +346,6 @@ export interface Pause {
   paused_at: number;
   paused_by: string | null;
   reason: string | null;
-}
-
-export interface AdvisorMessage {
-  id: string;
-  project: string;
-  turn_id: string | null;
-  role: "you" | "advisor";
-  kind: "text" | "tool" | "result" | "error" | "status";
-  text: string;
-  ts: number;
-}
-
-export interface AdvisorState {
-  project: string;
-  thinking: boolean;
-  has_memory: boolean;
-  host: string | null;
-  plan: Plan | null;
-  paused: Pause | null;
-  briefs_pending: number;
-  messages: AdvisorMessage[];
 }
 
 export interface DeferredItem {

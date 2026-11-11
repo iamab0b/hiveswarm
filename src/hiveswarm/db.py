@@ -421,8 +421,13 @@ def deferred_resolve(did: str, by: str | None, note: str | None = None) -> sqlit
     return one("SELECT * FROM deferred WHERE id = ?", did)
 
 
+# A chat agent's session is not work of the project: it does not start it (a profile stays changeable until the
+# first task or lead) and is not counted among its tasks. sessions.put() writes the JSON this matches.
+NOT_CHAT = "(session IS NULL OR session NOT LIKE '%\"role\": \"chat\"%')"
+
+
 def task_counts_by_project() -> dict[str, int]:
-    return {r["project"]: r["n"] for r in all_("SELECT project, COUNT(*) AS n FROM tasks GROUP BY project")}
+    return {r["project"]: r["n"] for r in all_(f"SELECT project, COUNT(*) AS n FROM tasks WHERE {NOT_CHAT} GROUP BY project")}
 
 
 def deferred_counts() -> dict[str, int]:

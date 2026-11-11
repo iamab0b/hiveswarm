@@ -4,7 +4,7 @@ Every agent's log already records what it did and when (tool calls, results, mes
 derives per-attempt step timings (how long each tool call took, how long the agent sat silent, how long until it
 first acted), stores them on the attempt when it ends, watches live work for a step that has stalled, and folds
 everything into a per-agent × task-type table with a plain status — healthy, slow, failing, unknown — that the
-router, the lead (hm_stats / hm_advise) and the Stats page all read. A slow or failing agent goes on probation:
+router, the lead (hm_stats / hm_advise) and the Control tab's stats all read. A slow or failing agent goes on probation:
 it stops getting hard work of that type but keeps getting easy pieces, so its numbers can recover.
 """
 from __future__ import annotations

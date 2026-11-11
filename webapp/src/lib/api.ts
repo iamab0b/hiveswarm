@@ -1,4 +1,4 @@
-import type { AdvisorState, Agent, AgentTable, DeferredItem, Directive, FeedEntry, LiveStep, InboxItem, LocalAgentsInfo, LocalInfo, LogEntry, Plan, ProfileInput, Project, ProjectProfile, ProjectSettings, RulesetRow, SessionInfo, StatRow, Summary, SwarmProfile, Task, TaskDetail } from "./types";
+import type { Agent, AgentTable, AppSettings, ChatRef, DeferredItem, Directive, FeedEntry, LiveStep, InboxItem, LocalAgentsInfo, LocalInfo, LogEntry, Plan, ProfileInput, Project, ProjectProfile, ProjectSettings, RulesetRow, SessionInfo, StatRow, Subscription, Summary, SwarmProfile, Task, TaskDetail } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -76,9 +76,11 @@ export const api = {
   setProfile: (p: ProfileInput) => req<SwarmProfile>("POST", "/profiles", p),
   deleteProfile: (name: string) => req<{ ok: boolean }>("DELETE", `/profiles/${name}`),
   projectProfile: (project: string) => req<ProjectProfile>("GET", `/projects/${project}/profile`),
-  advisor: (project: string) => req<AdvisorState>("GET", `/advisor/${project}`),
-  advisorTalk: (project: string, text: string) => req<{ ok: boolean; turn: string }>("POST", `/advisor/${project}/talk`, { text }),
-  advisorForget: (project: string) => req<{ ok: boolean }>("DELETE", `/advisor/${project}`),
+  chatHome: (host: string | null, fresh = false) => req<ChatRef>("POST", "/chats/home", { host, fresh }),
+  chatProject: (project: string, host: string | null) => req<ChatRef>("POST", `/chats/project/${project}`, { host }),
+  settings: () => req<AppSettings>("GET", "/settings"),
+  setSettings: (p: { default_profile?: string; chat_model?: string; chat_effort?: string }) => req<AppSettings>("POST", "/settings", p),
+  subscriptions: () => req<{ host: string; subscriptions: Subscription[] }>("GET", "/local/subscriptions"),
   projectPlan: (project: string) => req<{ project: string; plan: Plan | null }>("GET", `/projects/${project}/plan`),
   setPlan: (project: string, text: string) => req<{ project: string; plan: Plan }>("PUT", `/projects/${project}/plan`, { text, by: "you" }),
   pause: (project: string, reason: string) => req<{ ok: boolean }>("POST", `/projects/${project}/pause`, { by: "you", reason }),

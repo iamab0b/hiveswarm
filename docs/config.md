@@ -89,24 +89,33 @@ The token is not in the file: set `HIVESWARM_TOKEN` (in `~/.hiveswarm/env`). Wit
 | `verify_image` | `verify.default_image` | Docker image for this project's acceptance commands |
 | `verify_mode`, `verify_network` | from `[verify]` | per-project overrides |
 | `posture` | `decide.posture` | |
-| `acceptance_templates` | `[]` | suggestions shown in the New goal dialog |
+| `acceptance_templates` | `[]` | acceptance commands the lead is offered for this project |
 | `ruleset`, `ruleset_intensity` | from `[rulesets]` | `"craft"` or `"off"`; `"standard"` or `"strict"` (see [craft.md](craft.md)) |
-| `profile` | none | the profile the project runs on ([profiles.md](profiles.md)); set from the New goal dialog, fixed once the project has a task |
+| `profile` | none | the profile the project runs on ([profiles.md](profiles.md)); set when the project is created (by the chat agent or the *new project* dialog) or in its settings, fixed once the project has a task |
 | `lanes` | `{}` | per-project lane counts for the profile's coders, by agent id (`[projects.<name>.lanes]`, `deep-claude-opus-medium = 3`); the ×n steppers write it |
-| `agents` | `[]` | the roster of a project without a profile: only these agent ids (or adapters) take its work; the New goal dialog edits it ([profiles.md](profiles.md)) |
+| `agents` | `[]` | the roster of a project without a profile: only these agent ids (or adapters) take its work; the project's settings edit it ([profiles.md](profiles.md)) |
 
 ### `[profiles.<name>]`
 
-Which models a project's swarm runs on ([profiles.md](profiles.md)); the Agents page writes these tables, `hm profiles` lists them.
+Which models a project's swarm runs on ([profiles.md](profiles.md)); the Control tab writes these tables, `hm profiles` lists them.
 
 | key | | |
 |---|---|---|
 | `note` | `""` | shown on the profile's card |
-| `lead` | required | a table with `adapter` (a CLI that runs sessions), `model`, `effort`: runs the goal session and every session of a project on the profile |
-| `chat` | | `model`, `effort` for the advisor (always Claude Code) |
+| `lead` | required | a table with `adapter` (a CLI that runs sessions), `model`, `effort`: runs the project's lead, in a lane of its own |
 | `coders.<key>` | at least one | a table per thing that codes: `adapter`, `model`, `effort`, `count` (lanes, 1–32; a hub lane is always 1). The key is what it runs (`claude-opus-medium`); the app derives it |
 
 The lead runs as agent `<name>-lead`, each coder as `<name>-<key>`; the app writes those `[agents.*]` tables into the worker.toml of its own machine and keeps them in step with the projects' lane counts. Changes to `config.toml` are picked up without a restart.
+
+### `[defaults]`, `[chat]`
+
+App-wide settings the Control tab writes (`GET/POST /settings`).
+
+| key | default | |
+|---|---|---|
+| `defaults.profile` | none | the profile a project gets when the [chat agent](chat.md) starts it without naming one, and what the *new project* dialog preselects |
+| `chat.model` | Claude Code's default | the model of every chat agent (passed as `--model`) |
+| `chat.effort` | Claude Code's default | its reasoning effort: `low`, `medium`, `high`, `xhigh` or `max` |
 
 ### `[rulesets]`
 
@@ -156,7 +165,7 @@ The table name is the agent id shown everywhere; `adapter` picks the implementat
 | `adapter` | the table name | all | `claude_code`, `codex`, `cursor`, `gemini`, `antigravity`, `opencode`, or a plugin ([adapters.md](adapters.md)) |
 | `enabled` | `true` | all | |
 | `binary` | adapter's default | all | executable to look for on PATH |
-| `concurrency` | `1` | all | parallel lanes for this agent; the Agents page edits it in place and the worker resizes within ~10 s (see below) |
+| `concurrency` | `1` | all | parallel lanes for this agent; the Control tab edits it in place and the worker resizes within ~10 s (see below) |
 | `timeout` | `1800` | all | seconds per headless attempt |
 | `model` | agent's default | all | passed through to the CLI (`--model`) |
 | `effort` | agent's default | claude_code, codex | reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` for Claude Code (`--effort`), `minimal`…`xhigh` for Codex (`model_reasoning_effort`); other CLIs have no such setting and the worker says so once |
@@ -168,6 +177,15 @@ The table name is the agent id shown everywhere; `adapter` picks the implementat
 | `force` | `false` | cursor | `cursor-agent --force` |
 | `yolo` | `true` | gemini | `gemini --yolo` |
 | `pty` | `false` | antigravity | run under a pseudo-terminal |
+
+### `[chat]` (worker.toml)
+
+A worker that has tmux and serves Claude Code registers a chat agent by itself (`chat-<host>`, one lane per open chat agent plus a spare, sized by the hub; see [chat.md](chat.md#where-it-runs)). It needs no table. This optional one changes it:
+
+| key | default | |
+|---|---|---|
+| `enabled` | unset | `false`: this worker runs no chat agents; `true`: it does even without a Claude Code table |
+| `config_dir`, `oauth_token_file`, … | from `[agents.claude_code]` | Claude Code settings for chat agents only; the model and effort are not set here but on the hub (`[chat]` in `config.toml`) |
 
 ### Lane counts
 
@@ -192,5 +210,6 @@ Every worker running that agent checks for it every 10 seconds and sizes its lan
 | `HIVESWARM_URL`, `HIVESWARM_TOKEN` | how `hm`, the app and the MCP server reach the daemon |
 | `HIVESWARM_DECIDE_API_KEY` / `OPENAI_API_KEY`, `TYPESAFE_API_KEY` | decide backends |
 | `HIVESWARM_ORIGIN` | label the MCP server puts on tasks it creates |
+| `HIVESWARM_ROLE` | which tools `hiveswarm-mcp` offers: unset for the lead's full set, `chat` for the [chat agent](chat.md#tools-of-the-chat-role)'s |
 | `HIVESWARM_NETLOG` | `0` turns off the per-request connection log (`~/.hiveswarm/logs/net-*.jsonl`) |
 | `HIVEMIND_*` | the pre-rename names still work |

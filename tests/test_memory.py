@@ -1,4 +1,4 @@
-"""Memory across tasks: local FTS and Hindsight backends, lessons retained from attempts, recalled by the lead and the advisor."""
+"""Memory across tasks: local FTS and Hindsight backends, lessons retained from attempts, recalled by the lead and the chat agent."""
 from __future__ import annotations
 
 import asyncio
@@ -92,14 +92,14 @@ def test_failed_attempt_becomes_a_lesson_the_lead_can_recall(stack):
     assert any("redis" in t for t in got) and any("ruff" in t for t in got), "project and global scopes both recalled"
     assert not any("redis" in t for t in [i["text"] for i in stack.get("/memory/recall", q="redis", project="other")["items"]]), "project memories stay in their project"
 
-    env = {**stack.env, "PATH": f"{Path(sys.executable).parent}{os.pathsep}{stack.env['PATH']}", "HIVESWARM_ROLE": "advisor"}
+    env = {**stack.env, "PATH": f"{Path(sys.executable).parent}{os.pathsep}{stack.env['PATH']}", "HIVESWARM_ROLE": "chat"}
 
     async def via_mcp(s):
         names = {t.name for t in (await s.list_tools()).tools}
         assert {"hm_recall", "hm_remember"} <= names
         res = await s.call_tool("hm_recall", {"query": "rate limiter", "project": "demo"})
         return json.loads("\n".join(c.text for c in res.content if getattr(c, "text", None)))
-    from test_advisor import _with_mcp
+    from test_steering import _with_mcp
     out = asyncio.run(_with_mcp(env, via_mcp))
     assert out["items"] and "rate limiter" in out["items"][0]["text"].lower()
 

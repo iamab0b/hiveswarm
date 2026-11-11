@@ -21,7 +21,10 @@ except ImportError:
 URL = os.environ.get("HIVESWARM_URL", "http://127.0.0.1:7778").rstrip("/")
 TOKEN = os.environ.get("HIVESWARM_TOKEN", "")
 ORIGIN = os.environ.get("HIVESWARM_ORIGIN", "")
-ROLE = os.environ.get("HIVESWARM_ROLE", "lead")  # "advisor": read-only views plus the plan, pause/resume and briefs
+# "lead": everything but the chat agent's own tools. "chat": read-only views, the plan, pause/resume and briefs, plus
+# hm_start_project / hm_start_lead. "advisor" (0.2-0.3) is the chat role without those two.
+ROLE = os.environ.get("HIVESWARM_ROLE", "lead")
+CHAT_SESSION = os.environ.get("HIVESWARM_CHAT_SESSION", "")  # the chat agent's own session id, set by the worker
 _HEADERS = {"Authorization": f"Bearer {TOKEN}"} if TOKEN else {}
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -37,22 +40,37 @@ mcp = _Server(
         "Typical loop: hm_projects → hm_add_tasks (2-8 independent, verifiable tasks) or hm_new_session → hm_wait → "
         "hm_diff / hm_tail → hm_merge, hm_retry with a better spec, or hm_cancel. Keep the human informed: they see "
         "everything you do in the Hiveswarm app. Save the plan with hm_plan; when hm_wait returns briefs from the "
-        "advisor, act on them and hm_resume."
-        + (" This server runs in the ADVISOR role: read-only views, the plan, pause/resume and briefs; dispatching "
-           "and merging are the lead's." if ROLE == "advisor" else "")
+        "chat agent, act on them and hm_resume."
+        + (" This server runs in the CHAT role: read-only views, the plan, pause/resume and briefs, and "
+           "hm_start_project / hm_start_lead; dispatching and merging are the lead's." if ROLE in ("chat", "advisor") else "")
     ),
 )
 
 
-class HmError(Exception):
-    pass
+try:  # the SDK only shows the model the message of its own ToolError; anything else becomes "Error executing tool"
+    from mcp.server.mcpserver.exceptions import ToolError as _ToolError
+except ImportError:
+    try:
+        from mcp.server.fastmcp.exceptions import ToolError as _ToolError
+    except ImportError:
+        _ToolError = Exception  # type: ignore[assignment,misc]
 
 
-def tool(advisor: bool = False):
-    """Register a tool for the lead; with advisor=True also for the advisor role (which gets nothing else)."""
-    if ROLE == "advisor" and not advisor:
+class HmError(_ToolError):  # type: ignore[valid-type,misc]
+    """A failure the model should read: the daemon said no (and why), or it cannot be reached."""
+
+
+def tool(advisor: bool = False, chat_only: bool = False):
+    """Register a tool for the lead; with advisor=True also for the chat agent (which gets nothing else, apart from
+    the chat_only tools that are its alone)."""
+    if chat_only:
+        return mcp.tool() if ROLE == "chat" else (lambda fn: fn)
+    if ROLE in ("advisor", "chat") and not advisor:
         return lambda fn: fn
     return mcp.tool()
+
+
+HOME = "_home"  # where a chat agent lives before it starts a project; not a project, so the views leave it out
 
 
 def _req(method: str, path: str, body: dict[str, Any] | None = None, timeout: float = 60, **params: Any) -> Any:
@@ -95,6 +113,8 @@ def _row(t: dict[str, Any]) -> dict[str, Any]:
     if t["state"] == "done":
         out["branch"] = f"hiveswarm/{t['id']}"
     if s:
+        if s.get("role") == "chat" or s.get("lead"):
+            out["role"] = "chat" if s.get("role") == "chat" else "lead"
         out["turn"] = s.get("turn")
         if s.get("attention") and t["state"] not in ("done", "failed", "abandoned"):
             out["attention"] = s["attention"]
@@ -219,7 +239,7 @@ def hm_advise(project: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
 def hm_list(project: str | None = None, state: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
     """List tasks and sessions (newest first). state: pending|classified|assigned|running|verifying|done|failed|abandoned."""
     rows = _get("/tasks", project=project, state=state, limit=limit)
-    return [_row(t) for t in rows]
+    return [_row(t) for t in rows if t.get("project") != HOME]
 
 
 @tool(advisor=True)
@@ -265,9 +285,9 @@ _seen_flags: set[tuple[str, str]] = set()
 def hm_wait(task_ids: list[str], timeout_seconds: int = 120, stop_on_attention: bool = True) -> dict[str, Any]:
     """Block until every listed task/session is terminal (done/failed/abandoned), or one of them needs attention
     (a question, an approval, a session waiting for input, a `directive` flag from a standing-order audit, or a
-    `stalled` lane stuck on one step) when stop_on_attention is true, or the advisor sends a brief, or the timeout
+    `stalled` lane stuck on one step) when stop_on_attention is true, or the chat agent sends a brief, or the timeout
     passes. Call it again to keep waiting. Returns each id's state and, when relevant, its attention item; `briefs`
-    carries the advisor's updates (act on them, then hm_resume) and `paused` the projects on hold."""
+    carries the chat agent's updates (act on them, then hm_resume) and `paused` the projects on hold."""
     deadline = time.time() + max(5, min(timeout_seconds, 290))
     while True:
         rows = {t["id"]: t for t in _get("/tasks", limit=500)}
@@ -309,7 +329,7 @@ def hm_wait(task_ids: list[str], timeout_seconds: int = 120, stop_on_attention: 
                    "tasks": out}
             if briefs:
                 res["briefs"] = briefs
-                res["note"] = "the advisor briefed you: read it, adjust the plan (hm_plan) and the swarm, then hm_resume(project)"
+                res["note"] = "the chat agent briefed you for the human: read it, adjust the plan (hm_plan) and the swarm, then hm_resume(project)"
             if paused:
                 res["paused"] = paused
             return res
@@ -363,8 +383,8 @@ def hm_plan_get(project: str) -> dict[str, Any]:
 @tool(advisor=True)
 def hm_plan(project: str, text: str) -> dict[str, Any]:
     """Save the project's plan (markdown): goals, the waves and their tasks, decisions taken, what is deferred. The
-    lead saves it after planning and updates it as things change; the advisor updates it when the human changes
-    it; the human sees it on the Lead page."""
+    lead saves it after planning and updates it as things change; the chat agent updates it when the human changes
+    it; the human asks the chat agent to show it."""
     return _req("PUT", f"/projects/{project}/plan", {"text": text, "by": ORIGIN or ROLE})
 
 
@@ -377,8 +397,8 @@ def hm_pause(project: str, reason: str) -> dict[str, Any]:
 
 @tool(advisor=True)
 def hm_resume(project: str) -> dict[str, Any]:
-    """Resume a paused project. The lead calls this once it has read a brief and adjusted; the advisor or the human
-    can call it too."""
+    """Resume a paused project. The lead calls this once it has read a brief and adjusted; the chat agent or the
+    human can call it too."""
     return _post(f"/projects/{project}/resume")
 
 
@@ -388,6 +408,44 @@ def hm_brief(project: str, text: str) -> dict[str, Any]:
     update, How to proceed. The lead receives it from hm_wait (and in its terminal when it is idle) and is told to
     hm_resume once it has acted on it."""
     return _post(f"/projects/{project}/briefs", {"text": text, "by": ORIGIN or ROLE})
+
+
+@tool(advisor=True)
+def hm_profiles() -> dict[str, Any]:
+    """The saved profiles (which model leads a project and which coders take its tasks, with lane counts) and the
+    default one. A project's profile is fixed once it has started."""
+    r = _get("/profiles") or {}
+    out = []
+    for p in r.get("profiles") or []:
+        if p.get("error"):
+            continue
+        lead = p.get("lead") or {}
+        out.append({"name": p["name"], "default": bool(p.get("default")), "note": p.get("note") or "",
+                    "lead": " ".join(x for x in (lead.get("adapter"), lead.get("model"), lead.get("effort")) if x),
+                    "coders": [" ".join(x for x in (c.get("adapter"), c.get("model"), c.get("effort")) if x) + f" x{c.get('count', 1)}"
+                               for c in p.get("coders") or []],
+                    "used_by": [u["project"] for u in p.get("used_by") or []]})
+    return {"profiles": out, "default": next((p["name"] for p in out if p["default"]), None)}
+
+
+@tool(chat_only=True)
+def hm_start_project(name: str, brief: str, profile: str | None = None) -> dict[str, Any]:
+    """Start a project from this chat: create it (name: letters, digits, dashes), give it a profile (omit for the
+    default one; hm_profiles lists them), make this chat agent the project's chat agent and start the project's
+    lead with the brief. Naming an existing project that has no chat agent attaches to it instead and hands its
+    lead the brief. Works once per chat agent; ask the human to confirm the name and profile first."""
+    if not CHAT_SESSION:
+        raise HmError("this chat agent was not started by Hiveswarm (no HIVESWARM_CHAT_SESSION), so it cannot be moved into a project")
+    return _post(f"/chats/{CHAT_SESSION}/start_project", {"name": name, "brief": brief, "profile": profile})
+
+
+@tool(chat_only=True)
+def hm_start_lead(project: str, message: str | None = None) -> dict[str, Any]:
+    """Start the project's lead when none is running (it reopens with its previous conversation if it had one and
+    reads the briefs waiting for it), or hand a running lead a message. To change the course of work in flight use
+    hm_pause and hm_brief instead."""
+    r = _post("/leads", {"project": project, "message": message})
+    return {"lead": r.get("id"), "started": bool(r.get("created") or r.get("reopened")), "state": r.get("state")}
 
 
 @tool(advisor=True)
@@ -447,14 +505,14 @@ def hm_new_session(project: str, prompt: str, agent: str = "claude_code", permis
 @tool(advisor=True)
 def hm_sessions() -> list[dict[str, Any]]:
     """List interactive sessions with their turn (starting/working/waiting/idle/exited) and any pending attention item."""
-    return [_row(t) for t in _get("/sessions", limit=100)]
+    return [_row(t) for t in _get("/sessions", limit=100) if t.get("project") != HOME]
 
 
 @tool(advisor=True)
 def hm_inbox() -> list[dict[str, Any]]:
     """Everything that needs a decision: questions (with options), permission requests (with risk), sessions waiting
     for input, usage limits, failures. Ordered by urgency."""
-    return _get("/inbox").get("items", [])
+    return [i for i in _get("/inbox").get("items", []) if i.get("project") != HOME]
 
 
 @tool()

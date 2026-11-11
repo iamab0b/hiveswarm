@@ -37,6 +37,7 @@ export function agentAdapter(agent?: string | null, provider?: string | null): s
   if (provider) return provider;
   if (!agent) return null;
   if (AGENT_COLORS[agent]) return agent;
+  if (agent === "chat" || agent.startsWith("chat-")) return "claude_code";
   for (const seg of agent.split("-")) if (SEGMENT_ADAPTER[seg]) return SEGMENT_ADAPTER[seg];
   return null;
 }
@@ -47,7 +48,33 @@ export function agentColor(agent?: string | null, provider?: string | null): str
 
 export function agentLabel(agent?: string | null): string {
   if (!agent) return "unassigned";
+  if (isChatAgent(agent)) return "Chat agent";
   return AGENT_LABELS[agent] || agent;
+}
+
+/** The workspace of a chat agent that belongs to no project yet. Never a real project name. */
+export const HOME = "_home";
+
+/** The agent a worker registers by itself for chat agents: `chat-<host>`. */
+export function isChatAgent(agent?: string | null): boolean {
+  return !!agent && (agent === "chat" || agent.startsWith("chat-"));
+}
+
+export type TileRole = "chat" | "lead" | "session" | "task";
+
+/** What a task is in a workspace: the chat agent, the lead, an agent in its own terminal, or headless work. */
+export function roleOf(t: Task): TileRole {
+  if (t.kind !== "session") return "task";
+  const s = sessionOf(t);
+  if (s.role === "chat") return "chat";
+  if (s.lead) return "lead";
+  return "session";
+}
+
+/** Attention that calls for the human: everything but an agent sitting at its own prompt. */
+export function loudAttention(t: Task): Attention | null {
+  const a = liveAttention(t);
+  return a && a.kind !== "input" ? a : null;
 }
 
 export const TERMINAL: TaskState[] = ["done", "failed", "abandoned"];

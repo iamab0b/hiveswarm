@@ -2,9 +2,11 @@
 
 ## The lead
 
-`hm lead <project> "<what you want>"` (or the Lead page in the app) starts a persistent Claude Code session on a worker with two things a normal session does not have: the `hiveswarm` MCP server, and the `hiveswarm-lead` skill plus four companions installed into its Claude config directory. It runs in a read-only worktree of the project and never edits code itself: every change, even a one-line fix, goes through the swarm so it is verified and lands as a branch.
+The chat agent starts a project's lead when you give it a brief ([chat.md](chat.md)); `hm lead <project> "<what you want>"` and the *Start the lead* button in a project's workspace do the same. The lead is a persistent Claude Code session on a worker with two things a normal session does not have: the `hiveswarm` MCP server, and the `hiveswarm-lead` skill plus four companions installed into its Claude config directory. It runs in a read-only worktree of the project and never edits code itself: every change, even a one-line fix, goes through the swarm so it is verified and lands as a branch.
 
-Which agent the lead runs on, and which agents its tasks go to, is the project's **profile** when it has one ([profiles.md](profiles.md)): the session starts on the profile's lead agent (`<profile>-lead`, with the model and effort the profile names), `hm_advise` reports the profile and scores only its coders, and the lead keeps its dispatching inside them. The Lead page shows the profile as a strip above the chat, with the lane count of each coder, which is the one thing about it you can still change once the project has started.
+Which agent the lead runs on, and which agents its tasks go to, is the project's **profile** when it has one ([profiles.md](profiles.md)): the session starts on the profile's lead agent (`<profile>-lead`, with the model and effort the profile names), `hm_advise` reports the profile and scores only its coders, and the lead keeps its dispatching inside them. A project's settings on the Control tab show the profile with the lane count of each coder, which is the one thing about it you can still change once the project has started.
+
+In the app the lead is the tile beside the chat agent in the project's workspace: its real terminal, with what it asks you as a panel above it. You can type into it, but the usual way to follow it and to change its course is the chat agent, which pauses the project and hands the lead a brief instead of interrupting it mid-turn.
 
 Its loop, from the skill:
 
@@ -36,7 +38,7 @@ For Claude Code: `claude mcp add hiveswarm -- hiveswarm-mcp`. `HIVESWARM_ORIGIN`
 | projects | `hm_new_project`, `hm_delete_project` |
 | tasks | `hm_advise`, `hm_add_tasks`, `hm_wait`, `hm_diff`, `hm_merge` (`acknowledge_untested` for a flagged task), `hm_retry`, `hm_cancel`, `hm_delete` |
 | craft | `hm_deferred`, `hm_deferred_resolve` — the deferred ledger agents fill from their handoffs ([craft.md](craft.md)) |
-| plan and advisor | `hm_plan`, `hm_plan_get`, `hm_pause`, `hm_resume`, `hm_brief`, `hm_briefs` — the plan on file, pausing a project, briefs between the advisor and the lead ([advisor.md](advisor.md)); `HIVESWARM_ROLE=advisor` limits the server to the read-only tools plus these |
+| plan and chat agent | `hm_plan`, `hm_plan_get`, `hm_pause`, `hm_resume`, `hm_brief`, `hm_briefs` — the plan on file, pausing a project, briefs from the chat agent to the lead ([chat.md](chat.md)); `HIVESWARM_ROLE=advisor` limits the server to the read-only tools plus these |
 | memory | `hm_recall`, `hm_remember` — what the swarm learned before, when `[memory]` is on ([memory.md](memory.md)) |
 | sessions | `hm_new_session`, `hm_sessions`, `hm_inbox`, `hm_send`, `hm_approve`, `hm_deny`, `hm_answer`, `hm_finish`, `hm_continue` |
 | standing orders | `hm_directive`, `hm_directives`, `hm_directive_clear`, `hm_clear_flag` |

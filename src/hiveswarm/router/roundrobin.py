@@ -84,7 +84,7 @@ def _on_roster(agent_id: str, names: list[str], providers: dict[str, str]) -> bo
 def choose(task: Any, cls: dict[str, Any] | None, busy: set[str] | None = None) -> str | None:
     global _cursor
     busy = busy or set()
-    alive = db.agents_alive()
+    alive = [a for a in db.agents_alive() if a["profile"] != "_chat"]  # the chat agent talks; it never takes a task
     candidates = [a["agent_id"] for a in alive if _capable(a, cls)]
     candidates += _local_lanes(cls)
 

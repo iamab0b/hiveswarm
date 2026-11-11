@@ -13,6 +13,17 @@ from .config import load
 
 log = logging.getLogger("hiveswarm.sessions")
 
+HOME = "_home"  # the workspace of a chat agent that belongs to no project yet; never a real project name
+CHAT_PROFILE = "_chat"  # the `profile` marker of the chat agent a worker registers by itself
+
+
+
+def chat_agent_id(host: str) -> str:
+    """The id of the chat agent a worker on `host` registers: one per machine, so the terminal is where the app is."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (host or "").lower()).strip("-")[:40]
+    return f"chat-{slug}" if slug else "chat"
+
+
 PERMISSION_MODES = ("auto", "acceptEdits", "bypass")
 TURNS = ("starting", "working", "waiting", "idle", "exited")
 ATTENTION_KINDS = ("permission", "question", "usage_limit", "input", "failed", "handoff")
@@ -42,7 +53,7 @@ def default_session() -> dict[str, Any]:
         "agent": None, "permission_mode": "auto", "turn": "starting", "attention": None,
         "host": None, "tmux": None, "name": None, "claude_session_id": None, "transcript_path": None,
         "unread": 0, "last_viewed_seq": 0, "prompt": "", "started_at": None, "last_event_at": None,
-        "turns": 0, "asks": 0, "auto_approved": 0, "lead": False, "persistent": False,
+        "turns": 0, "asks": 0, "auto_approved": 0, "lead": False, "persistent": False, "role": None,
     }
 
 
@@ -74,17 +85,26 @@ def update(tid: str, **fields: Any) -> dict[str, Any] | None:
 
 def create(project: str, spec: str, acceptance: str | None, repo_path: str, base_ref: str,
            agent: str, permission_mode: str = "auto", name: str | None = None, lead: bool = False,
-           origin: str | None = None, persistent: bool = False) -> str:
+           origin: str | None = None, persistent: bool = False, role: str | None = None,
+           model: str | None = None, effort: str | None = None) -> str:
+    """Create a session task. `role="chat"` makes it a chat agent's session: it has no repository and nothing to
+    classify, so it is ready to route at once."""
     if permission_mode not in PERMISSION_MODES:
         raise ValueError(f"permission_mode must be one of {PERMISSION_MODES}")
     tid = db.task_insert(project, spec, acceptance, repo_path, base_ref)
     s = default_session()
     s.update({"agent": agent, "permission_mode": permission_mode, "prompt": spec,
               "name": name or f"hm-{tid[:8]}", "started_at": None, "lead": bool(lead), "persistent": bool(persistent)})
-    db.run("UPDATE tasks SET kind = 'session', session = ?, max_attempts = 1 WHERE id = ?", json.dumps(s), tid)
+    if role:
+        s.update({"role": role, "model": model, "effort": effort})
+    state = "classified" if role == "chat" else "pending"
+    db.run("UPDATE tasks SET kind = 'session', session = ?, max_attempts = 1, state = ? WHERE id = ?", json.dumps(s), state, tid)
     first = (spec.strip().splitlines() or [""])[0][:120]
-    what = ("standing lead" if persistent else "lead session") if lead else "session"
     by = f" by {origin}" if origin else ""
+    if role == "chat":
+        db.log_append(tid, "daemon", f"chat agent requested on {agent}" + (f" for {project}" if project != HOME else "") + by)
+        return tid
+    what = ("standing lead" if persistent else "lead session") if lead else "session"
     db.log_append(tid, "daemon", f"{what} requested for {agent} ({permission_mode}) in {project}{by}: {first}")
     return tid
 
@@ -94,6 +114,12 @@ def enqueue_command(tid: str, kind: str, payload: dict[str, Any] | None, host: s
     db.run("INSERT INTO session_commands (id, task_id, host, kind, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)",
            cid, tid, host, kind, json.dumps(payload or {}), db.now())
     return cid
+
+
+def drop_untaken_commands(tid: str) -> None:
+    """Forget commands no worker has picked up yet. Used when a session is reopened: a `kill` still queued from
+    closing it must not reach the run that is about to start."""
+    db.run("DELETE FROM session_commands WHERE task_id = ? AND taken_at IS NULL", tid)
 
 
 def take_commands(host: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -321,3 +347,38 @@ def find_lead(project: str, include_ended: bool = False) -> dict[str, Any] | Non
             d["session"] = {**default_session(), **s}
             return d
     return None
+
+
+def _chat_rows(where: str, *params: Any) -> list[dict[str, Any]]:
+    out = []
+    for r in db.all_(f"SELECT * FROM tasks WHERE kind = 'session' AND {where} ORDER BY created_at DESC", *params):
+        try:
+            s = json.loads(r["session"] or "{}")
+        except Exception:
+            continue
+        if s.get("role") == "chat":
+            d = dict(r)
+            d["session"] = {**default_session(), **s}
+            out.append(d)
+    return out
+
+
+ENDED = ("done", "failed", "abandoned")
+
+
+def chats(project: str, include_ended: bool = False) -> list[dict[str, Any]]:
+    """The chat agents' sessions of a project (HOME for the ones that belong to none), newest first."""
+    if include_ended:
+        return _chat_rows("project = ?", project)
+    return _chat_rows("project = ? AND state NOT IN ('done','failed','abandoned')", project)
+
+
+def find_chat(project: str, include_ended: bool = False) -> dict[str, Any] | None:
+    rows = chats(project, include_ended)
+    return rows[0] if rows else None
+
+
+def chats_live(agent: str | None = None) -> int:
+    """How many chat agents are running or about to (on one agent table, or everywhere)."""
+    rows = _chat_rows("state NOT IN ('done','failed','abandoned')")
+    return sum(1 for r in rows if agent is None or r["session"].get("agent") == agent)

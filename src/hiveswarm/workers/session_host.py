@@ -8,6 +8,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -121,6 +122,25 @@ def kill_window(win: str) -> None:
     tmux("kill-window", "-t", win)
 
 
+# tmux takes a command of at most 16 KB in all ("command too long" above that). A chat agent's system prompt with a
+# long plan, or a lead's brief, can come close, so a long command line is started from a script instead.
+LAUNCH_INLINE_MAX = 12000
+
+
+def launcher_path(tid: str) -> Path:
+    return Path(tempfile.gettempdir()) / f"hiveswarm-launch-{os.getuid()}" / f"{tid}.sh"
+
+
+def launcher(tid: str, cmd: str) -> str:
+    """Write `cmd` to a script only this user can read (the command carries the hub token) and return its path."""
+    path = launcher_path(tid)
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("#!/bin/sh\nexec " + cmd + "\n")
+    return str(path)
+
+
 HOOK_SCRIPT = '''#!/usr/bin/env python3
 import json, sys, urllib.request
 port, tid = sys.argv[1], sys.argv[2]
@@ -189,6 +209,8 @@ class Live:
     last_screen: str = ""
     attention_hash: str = ""
     lead: bool = False
+    role: str | None = None   # "chat" for a chat agent's session
+    adapter: str = ""         # the CLI behind `agent` (an agent id such as deep-lead or chat-laptop runs claude_code)
     turn: str = "starting"
     idle_reminded: bool = False
     reminded_at: float = 0.0
@@ -204,6 +226,7 @@ class SessionHost:
         self.hook_port = hook_port
         self.live: dict[str, Live] = {}
         self.lock = threading.Lock()
+        self._ran = threading.local()
         self._dir_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         self._dir_state: dict[tuple[str, str], dict[str, float]] = {}
         self._dir_lock = threading.Lock()
@@ -274,11 +297,19 @@ class SessionHost:
                 log.warning("could not pre-answer Claude's first-run dialogs in %s: %s", env["CLAUDE_CONFIG_DIR"], e)
             pm = {"auto": "auto", "acceptEdits": "acceptEdits", "bypass": "bypassPermissions"}.get(mode, "auto")
             argv = ["claude", "--permission-mode", pm, "--settings", hook_settings(self.script, self.hook_port, live.tid)]
-            if live.lead:
+            if live.role == "chat":
+                # The chat agent talks and steers; it never edits and never runs commands. Its tools are the
+                # hiveswarm MCP server in its chat role plus reading and the web.
+                argv += ["--mcp-config", self.mcp_config(live, role="chat"),
+                         "--allowedTools", "mcp__hiveswarm,Read,Grep,Glob,WebSearch,WebFetch",
+                         "--disallowedTools", "Bash,Edit,Write,MultiEdit,NotebookEdit",
+                         "--append-system-prompt", self._chat_system_prompt(live.tid)]
+            elif live.lead:
                 argv += ["--mcp-config", self.lead_mcp_config(live)]
                 self.install_lead_skill(env["CLAUDE_CONFIG_DIR"])
             from .. import rulesets
-            adapters.install_skills(env["CLAUDE_CONFIG_DIR"], {"hiveswarm-craft": rulesets.CRAFT_SKILL_MD})
+            if live.role != "chat":
+                adapters.install_skills(env["CLAUDE_CONFIG_DIR"], {"hiveswarm-craft": rulesets.CRAFT_SKILL_MD})
             if resume_id:
                 argv += ["--resume", resume_id]
             else:
@@ -287,7 +318,8 @@ class SessionHost:
                 argv += ["--model", acfg["model"]]
             if acfg.get("effort"):
                 argv += ["--effort", str(acfg["effort"])]
-            argv.append(prompt)
+            if prompt:
+                argv.append(prompt)
         elif adapter == "codex":
             if mode == "bypass":
                 argv = ["codex", "--sandbox", "danger-full-access", "-a", "never"]
@@ -320,32 +352,63 @@ class SessionHost:
                 argv = [binary, prompt]
         return argv, env
 
-    def lead_mcp_config(self, live: Live) -> str:
+    def mcp_config(self, live: Live, role: str = "lead") -> str:
         url = self.cfg.get("daemon_url") or os.environ.get("HIVESWARM_URL") or "http://127.0.0.1:7778"
         token = self.cfg.get("token") or os.environ.get("HIVESWARM_TOKEN") or ""
         binary = shutil.which("hiveswarm-mcp") or "hiveswarm-mcp"
-        return json.dumps({"mcpServers": {"hiveswarm": {
-            "type": "stdio", "command": binary, "args": [],
-            "env": {"HIVESWARM_URL": url, "HIVESWARM_TOKEN": token, "HIVESWARM_ORIGIN": f"lead {live.tid[:8]}"}}}})
+        env = {"HIVESWARM_URL": url, "HIVESWARM_TOKEN": token, "HIVESWARM_ORIGIN": f"{role} {live.tid[:8]}"}
+        if role == "chat":
+            env.update({"HIVESWARM_ROLE": "chat", "HIVESWARM_CHAT_SESSION": live.tid, "HIVESWARM_ORIGIN": "chat"})
+        return json.dumps({"mcpServers": {"hiveswarm": {"type": "stdio", "command": binary, "args": [], "env": env}}})
+
+    def lead_mcp_config(self, live: Live) -> str:
+        return self.mcp_config(live, role="lead")
+
+    def _chat_system_prompt(self, tid: str) -> str:
+        """The chat agent's system prompt, which the hub writes (it knows the profiles, the projects and the plan)."""
+        try:
+            return str((self.client.get(f"/chats/{tid}/prompt", timeout=20) or {}).get("system_prompt") or "")
+        except Exception as e:
+            log.warning("chat %s: no system prompt from the hub (%s); starting with a short one", tid[:8], e)
+            return ("You are the Hiveswarm chat agent. Use the hiveswarm tools to look at the swarm; hm_start_project starts "
+                    "a project from a brief. You never edit code.")
 
     @staticmethod
     def install_lead_skill(config_dir: str) -> None:
         from .. import lead_skills
         adapters.install_skills(config_dir, {"hiveswarm-lead": _lead.SKILL_MD, **lead_skills.SKILLS})
 
+    def last_window(self) -> str | None:
+        """The tmux window of the session the calling thread just ran (`run_session` or `adopt`). Its caller closes
+        that one: the window the hub has on record may already belong to the session's next run."""
+        return getattr(self._ran, "win", None)
+
     def run_session(self, agent: str, acfg: dict[str, Any], task: dict[str, Any], sess: dict[str, Any],
                     attempt_id: str | None, wt: Path, mirror: Path, ship: Any, cancel: threading.Event) -> str:
+        self._ran.win = None
+        with self.lock:
+            old = self.live.get(task["id"])
+        if old is not None:
+            # The same session was closed and reopened within a second or two and its last run is still closing on
+            # another lane. Let that one finish first, so that only one run of a session answers its hooks and
+            # commands at a time.
+            old.kill.set()
+            old.done.wait(timeout=20)
         live = Live(tid=task["id"], agent=agent, wt=str(wt), mirror=str(mirror), project=task["project"],
                     attempt_id=attempt_id, name=sess.get("name") or f"hm-{task['id'][:8]}",
-                    permission_mode=sess.get("permission_mode") or "auto", ship=ship, lead=bool(sess.get("lead")))
+                    permission_mode=sess.get("permission_mode") or "auto", ship=ship, lead=bool(sess.get("lead")),
+                    role=sess.get("role") or None, adapter=acfg.get("adapter", agent))
         resume_id = None
         if sess.get("resume") and sess.get("claude_session_id") and acfg.get("adapter", agent) == "claude_code":
             resume_id = str(sess["claude_session_id"])
-        prompt = self._session_prompt(task, sess, resumed=bool(resume_id))
+        # a chat agent opens at its own prompt and waits for the human; everything else starts on its task
+        prompt = "" if live.role == "chat" else self._session_prompt(task, sess, resumed=bool(resume_id))
         argv, env = self.launch_argv(agent, acfg, live, prompt, resume_id)
         if adapters.SANDBOX:
             argv = [*adapters.SANDBOX, *argv]
         cmd = shlex.join(argv)
+        if len(cmd.encode()) > LAUNCH_INLINE_MAX:
+            cmd = shlex.join(["sh", launcher(live.tid, cmd)])
         ensure_server()
         env_args: list[str] = []
         for k, v in env.items():
@@ -374,11 +437,13 @@ class SessionHost:
         live = Live(tid=task["id"], agent=sess.get("agent") or task.get("claimed_by") or "agent", wt=wt, mirror=mirror,
                     project=task["project"], attempt_id=None, win=sess.get("tmux") or "",
                     name=sess.get("name") or f"hm-{task['id'][:8]}", permission_mode=sess.get("permission_mode") or "auto",
-                    transcript_path=sess.get("transcript_path"), ship=ship)
+                    transcript_path=sess.get("transcript_path"), ship=ship, lead=bool(sess.get("lead")),
+                    role=sess.get("role") or None, adapter="claude_code" if sess.get("claude_session_id") else "")
         with self.lock:
             self.live[live.tid] = live
         live.last_activity = time.monotonic()
         live.idle_reported = True
+        self._ran.win = None
         ship.emit("status", f"worker restarted; re-attached to tmux window {live.win}")
         if live.transcript_path:
             threading.Thread(target=self._tail_transcript, args=(live, True), daemon=True, name=f"tail-{live.tid[:8]}").start()
@@ -406,8 +471,13 @@ class SessionHost:
                 time.sleep(1.0)
         finally:
             with self.lock:
-                self.live.pop(live.tid, None)
+                if self.live.get(live.tid) is live:
+                    self.live.pop(live.tid, None)
             self._resolve_pending(live, None)
+            self._ran.win = live.win
+            launcher_path(live.tid).unlink(missing_ok=True)
+            if outcome == "cancelled" and live.win:
+                kill_window(live.win)  # before the next run of this session may start
             live.done.set()
         return outcome
 
@@ -422,7 +492,7 @@ class SessionHost:
             return ""
 
     def _lead_context(self, project: str) -> tuple[str | None, list[str]]:
-        """The stored plan and the advisor's undelivered briefs, for a lead that is starting or resuming."""
+        """The stored plan and the chat agent's undelivered briefs, for a lead that is starting or resuming."""
         plan, briefs = None, []
         try:
             r = self.client.get(f"/projects/{project}/plan", timeout=15) or {}
@@ -751,14 +821,9 @@ class SessionHost:
     # ── commands from the daemon ───────────────────────────────────────
 
     def _command_loop(self) -> None:
-        advisor_ok = bool(shutil.which("claude")) and any(
-            (a.get("adapter", name) == "claude_code") and a.get("enabled", True) is not False
-            for name, a in (self.cfg.get("agents") or {}).items())
         while True:
             try:
-                out = self.client.get("/sessions/commands", host=self.host, wait=20, advisor_ok="true" if advisor_ok else None)
-                for turn in (out or {}).get("advisor", []):
-                    threading.Thread(target=self._advisor_turn, args=(turn,), name=f"advisor-{turn.get('project')}", daemon=True).start()
+                out = self.client.get("/sessions/commands", host=self.host, wait=20)
                 for c in (out or {}).get("commands", []):
                     try:
                         res = self._handle_command(c)
@@ -836,71 +901,6 @@ class SessionHost:
             return "\n".join(lines[-n:])[-12000:]
         return f"unknown command {kind}"
 
-    # ── advisor turns (headless Claude Code with the advisor's MCP role) ─
-
-    def _claude_profile(self) -> dict[str, Any]:
-        for name, a in (self.cfg.get("agents") or {}).items():
-            if a.get("adapter", name) == "claude_code" and a.get("enabled", True) is not False:
-                return dict(a)
-        return {}
-
-    def _advisor_turn(self, turn: dict[str, Any]) -> None:
-        """Run one advisor turn: `claude -p` resuming the project's advisor session, with the hiveswarm MCP server in
-        its advisor role, streaming what it says and calls into the conversation."""
-        tid = turn["id"]
-        project = turn["project"]
-        acfg = self._claude_profile()
-        env = claude_auth.auth_env(acfg)
-        cwd = self.root / "advisor" / project
-        cwd.mkdir(parents=True, exist_ok=True)
-        try:
-            claude_auth.seed_config(env["CLAUDE_CONFIG_DIR"], [str(cwd)])
-        except Exception:
-            pass
-        url = self.cfg.get("daemon_url") or os.environ.get("HIVESWARM_URL") or "http://127.0.0.1:7778"
-        token = self.cfg.get("token") or os.environ.get("HIVESWARM_TOKEN") or ""
-        binary = shutil.which("hiveswarm-mcp") or "hiveswarm-mcp"
-        mcp_cfg = json.dumps({"mcpServers": {"hiveswarm": {"type": "stdio", "command": binary, "args": [], "env": {
-            "HIVESWARM_URL": url, "HIVESWARM_TOKEN": token, "HIVESWARM_ROLE": "advisor", "HIVESWARM_ORIGIN": "advisor"}}}})
-        argv = ["claude", "-p", turn["text"], "--output-format", "stream-json", "--verbose",
-                "--mcp-config", mcp_cfg, "--allowedTools", "mcp__hiveswarm",
-                "--disallowedTools", "Bash,Edit,Write,MultiEdit,NotebookEdit",
-                "--append-system-prompt", turn.get("system_prompt") or ""]
-        if turn.get("claude_session_id"):
-            argv += ["--resume", turn["claude_session_id"]]
-        if turn.get("model") or acfg.get("model"):
-            argv += ["--model", turn.get("model") or acfg["model"]]
-        if turn.get("effort"):
-            argv += ["--effort", str(turn["effort"])]
-        meta: dict[str, Any] = {}
-        inner = adapters.claude_parser(meta, str(cwd))
-
-        def parse(line: str) -> list[tuple[str, str]]:
-            try:
-                ev = json.loads(line.strip())
-                if isinstance(ev, dict) and ev.get("type") == "system" and ev.get("subtype") == "init" and ev.get("session_id"):
-                    meta["session_id"] = ev["session_id"]
-            except Exception:
-                pass
-            return inner(line)
-
-        def emit(kind: str, text: str) -> None:
-            if kind in ("msg", "tool", "result", "err"):
-                try:
-                    self.client.post(f"/advisor/turns/{tid}/events", {"kind": {"msg": "text", "err": "error"}.get(kind, kind), "text": text, "ts": time.time()}, timeout=15)
-                except Exception as e:
-                    log.debug("advisor event failed: %s", e)
-
-        res = adapters.run_cli(argv, str(cwd), env, int(acfg.get("timeout", 600)), emit=emit, parser=parse)
-        error = None
-        if not res.get("ok"):
-            error = f"the advisor's Claude Code run ended with {res.get('outcome')}: {(res.get('log') or '')[-400:].strip()}"
-            log.warning("advisor turn %s for %s: %s", tid[:8], project, error)
-        try:
-            self.client.post(f"/advisor/turns/{tid}/done", {"host": self.host, "claude_session_id": meta.get("session_id"), "error": error}, timeout=15)
-        except Exception as e:
-            log.warning("advisor done for %s failed: %s", tid[:8], e)
-
     # ── screen monitor (agents without hooks) ─────────────────────────
 
     def _monitor_loop(self) -> None:
@@ -912,7 +912,7 @@ class SessionHost:
                 if not live.win:
                     continue
                 try:
-                    if live.agent == "claude_code":
+                    if live.adapter == "claude_code" or live.agent == "claude_code":  # Claude Code reports through its hooks
                         continue
                     self._monitor_one(live)
                     if live.idle_reported:

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import type { DeferredItem } from "@/lib/types";
-import { age, agentLabel, short } from "@/lib/utils";
+import { age, agentLabel } from "@/lib/utils";
+import { TaskLink } from "./bits";
 import { Button } from "./ui/button";
 import { act } from "./actions";
 
@@ -41,7 +41,7 @@ export function DeferredList({ project, title = "Deferred" }: { project: string 
               </div>
               <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-meta">
                 {d.agent ? <span>{agentLabel(d.agent)}</span> : null}
-                {d.task_id ? <Link to={`/t/${d.task_id}`} className="mono hover:text-fg hover:underline">{short(d.task_id)}</Link> : null}
+                {d.task_id ? <TaskLink id={d.task_id} className="text-[11px] text-dim" /> : null}
                 <span>{age(d.created_at)} ago</span>
               </div>
             </div>

@@ -7,7 +7,7 @@ Everything below also applies to one worker on the hub itself plus extra workers
 ## Hub
 
 ```bash
-pip install --user ./hiveswarm-0.2.0-py3-none-any.whl
+pip install --user ./hiveswarm-0.4.0-py3-none-any.whl
 hm init --project myapp --repo ~/repos/myapp
 ```
 
@@ -81,7 +81,7 @@ Interactive sessions from a worker service need tmux and the agents' sign-ins av
 
 Works as a normal Linux worker. Two things to know:
 
-- `hm ui` opens the Windows browser through `wslview`/`explorer.exe` when present; the "open folder" button on the Lead page opens the project's local copy in Explorer via `wslpath`.
+- `hm ui` opens the Windows browser through `wslview`/`explorer.exe` when present; the "open folder" button in a project's settings opens the project's local copy in Explorer via `wslpath`.
 - The app is at `http://localhost:7790` from Windows; Windows reaches WSL2's localhost automatically.
 
 ## A local model box

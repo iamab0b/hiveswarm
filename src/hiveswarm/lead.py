@@ -71,10 +71,10 @@ Four companion skills go deeper; read the one that matches the step you are on:
    sharper spec (say what was wrong). Cancel runaway agents with `hm_cancel`.
 8. **Report**: when the goal is met (or blocked), summarise what was merged, what failed and why, and what is
    left, in a few lines. Then stop and wait for the human's next message.
-9. **Plan and briefs**: `hm_plan` right after planning and whenever the plan changes; the human sees it on the
-   Lead page and talks it over with the advisor without interrupting you. If `hm_wait` returns `briefs`, the
-   advisor paused the project for a change of course: read the brief, adjust (cancel, retry, add tasks, update
-   the plan), say in two lines what changed, then `hm_resume(project)`.
+9. **Plan and briefs**: `hm_plan` right after planning and whenever the plan changes; the human talks it over
+   with the project's chat agent, in the terminal beside yours, without interrupting you. If `hm_wait` returns
+   `briefs`, the chat agent paused the project because the human changed course: read the brief, adjust (cancel,
+   retry, add tasks, update the plan), say in two lines what changed, then `hm_resume(project)`.
 
 ## Rules
 
@@ -139,9 +139,9 @@ def lead_prompt(goal: str, project: str, acceptance: str | None = None, persiste
         "then correct the agent with hm_send, or hm_cancel and hm_retry with the rule in the spec, or hm_clear_flag "
         "for a false alarm. Only some tasks need one; a rule the human states in their request always does.",
         "",
-        "Plan and advisor: save your plan with hm_plan(project, text) as soon as you have one and keep it current; the "
-        "human reads it on the Lead page and discusses it with the advisor, a separate agent that never dispatches. "
-        "When the human changes course, the advisor pauses the project and hands you a brief: hm_wait returns it under "
+        "Plan and chat agent: save your plan with hm_plan(project, text) as soon as you have one and keep it current. "
+        "The human follows your work through the project's chat agent, a separate agent in the terminal beside yours "
+        "that never dispatches. When the human changes course, it pauses the project and hands you a brief: hm_wait returns it under "
         "`briefs` (it also arrives in this terminal when you are idle). Read it, update the plan and the swarm "
         "(cancel, retry, add tasks), tell the human in two lines what changed, then hm_resume(project) so new work "
         "starts again.",
@@ -160,7 +160,7 @@ def lead_prompt(goal: str, project: str, acceptance: str | None = None, persiste
     if plan:
         parts += ["", "## The plan on file (hm_plan)", plan.strip()[:6000]]
     if briefs:
-        parts += ["", "## Briefs from the advisor waiting for you"] + [f"- {b.strip()}" for b in briefs[:5]] + [
+        parts += ["", "## Briefs from the human (through the chat agent) waiting for you"] + [f"- {b.strip()}" for b in briefs[:5]] + [
             "Act on them first, then hm_resume(project)."]
     if learned:
         parts += ["", learned, "hm_recall(query, project) finds more before you plan; hm_remember(text, project) keeps a lesson "

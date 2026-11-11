@@ -76,15 +76,34 @@ def _route_session(task: Any, lease: int) -> bool:
         db.log_append(task["id"], "daemon", f"{agent} does not support interactive sessions yet; cancel this and use a CLI agent on a worker")
         db.task_set_state(task["id"], "failed", claimed_by=None, lease_expires=None)
         return True
-    alive = {a["agent_id"] for a in db.agents_alive()}
-    if agent not in alive:
-        return False
-    busy = db.busy_counts().get(agent, 0)
-    if busy >= db.agent_capacities().get(agent, 1):
-        return False
-    db.task_assign(task["id"], agent, lease)
-    db.log_append(task["id"], "daemon", f"routed to {agent} (interactive session)")
+    with _route_lock:
+        alive = {a["agent_id"] for a in db.agents_alive()}
+        if agent not in alive:
+            return False
+        busy = db.busy_counts().get(agent, 0)
+        if busy >= db.agent_capacities().get(agent, 1):
+            return False
+        fresh = db.task_get(task["id"])
+        if fresh is None or fresh["state"] != "classified":
+            return False
+        db.task_assign(task["id"], agent, lease)
+    db.log_append(task["id"], "daemon", f"routed to {agent}" + (" (chat agent)" if s.get("role") == "chat" else " (interactive session)"))
     return True
+
+
+_route_lock = threading.Lock()
+
+
+def route_now(tid: str) -> bool:
+    """Route one session without waiting for the dispatcher's next pass (a chat agent should open at once)."""
+    task = db.task_get(tid)
+    if task is None or task["state"] != "classified" or task["kind"] != "session":
+        return False
+    try:
+        return _route_session(task, int(load().get("daemon.lease_seconds", 1800)))
+    except Exception as e:
+        log.warning("could not route %s right away: %s", tid, e)
+        return False
 
 
 def _route_and_dispatch(task: Any) -> bool:

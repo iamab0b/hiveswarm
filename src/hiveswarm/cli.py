@@ -144,7 +144,7 @@ def cmd_agents(a: argparse.Namespace) -> None:
 
 
 def cmd_profiles(a: argparse.Namespace) -> None:
-    """Profiles on the hub: which models lead, chat and code, and the projects on each."""
+    """Profiles on the hub: which models lead and code, and the projects on each."""
     if getattr(a, "project", None):
         v = _get(f"/projects/{a.project}/profile")
         if not v.get("profile"):
@@ -156,29 +156,28 @@ def cmd_profiles(a: argparse.Namespace) -> None:
         if r.get("error"):
             print(f"  {r['error']}")
             return
-        rows = [("lead", r["lead"]), ("chat", r["chat"]), *(("coder", c) for c in r["coders"])]
+        rows = [("lead", r["lead"]), *(("coder", c) for c in r["coders"])]
         print(f"  {'role':6} {'agent':30} {'runs as':36} lanes  alive")
         for role, x in rows:
             runs = " ".join(s for s in (x.get("adapter"), x.get("model"), f"effort={x['effort']}" if x.get("effort") else None) if s)
             live = x.get("live")
-            lanes = "-" if role == "chat" else f"{(live or {}).get('busy', 0)}/{(live or {}).get('capacity', 0)} of {x.get('count', 1)}" if role == "coder" else f"{(live or {}).get('busy', 0)}/{(live or {}).get('capacity', 0)}"
-            alive = "-" if role == "chat" else ("yes" if (live or {}).get("alive") else "no")
+            lanes = f"{(live or {}).get('busy', 0)}/{(live or {}).get('capacity', 0)} of {x.get('count', 1)}" if role == "coder" else f"{(live or {}).get('busy', 0)}/{(live or {}).get('capacity', 0)}"
+            alive = "yes" if (live or {}).get("alive") else "no"
             print(f"  {role:6} {(x.get('agent_id') or '(any claude_code)'):30} {runs:36} {lanes:6} {alive}")
         return
     rows = _get("/profiles").get("profiles") or []
     if not rows:
-        print("no profiles yet; add one on the Agents page or under [profiles.<name>] in the hub's config.toml")
+        print("no profiles yet; add one on the app's Control tab or under [profiles.<name>] in the hub's config.toml")
         return
     for p in rows:
         used = ", ".join(f"{u['project']}{' (started)' if u['started'] else ''}" for u in p.get("used_by") or []) or "no project"
-        print(f"{p['name']}: {p.get('note') or ''}".rstrip(": "))
+        print((f"{p['name']}{' (default)' if p.get('default') else ''}: {p.get('note') or ''}").rstrip(": "))
         if p.get("error"):
             print(f"  invalid: {p['error']}")
             continue
         def role(x: dict | None) -> str:
             return " ".join(s for s in ((x or {}).get("adapter"), (x or {}).get("model"), (x or {}).get("effort")) if s) or "?"
         print(f"  lead   {role(p.get('lead'))}  ({p['lead']['agent_id']})")
-        print(f"  chat   {role(p.get('chat'))}")
         for c in p.get("coders") or []:
             print(f"  coder  {role(c)} ×{c['count']}  ({c['agent_id']})")
         print(f"  on: {used}")
@@ -712,7 +711,7 @@ def main() -> None:
     s.add_argument("--note", default=None, help="why it is resolved (with --resolve)")
     s.set_defaults(fn=cmd_deferred)
 
-    s = sub.add_parser("profiles", help="profiles: which models lead, chat and code; --project shows what a project runs on")
+    s = sub.add_parser("profiles", help="profiles: which models lead and code; --project shows what a project runs on")
     s.add_argument("--project", help="show this project's profile resolved to agents and live lanes")
     s.set_defaults(fn=cmd_profiles)
 

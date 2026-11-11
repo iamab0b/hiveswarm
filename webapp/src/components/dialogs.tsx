@@ -1,19 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Loader2, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import type { Task } from "@/lib/types";
 import { agentLabel, cn, sessionOf } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "./ui/dialog";
-import { Input, Label, Segmented, Select, Switch, Textarea } from "./ui/fields";
+import { Input, Label, Select, Switch, Textarea } from "./ui/fields";
 import { act } from "./actions";
-import { NO_PROFILE, ProfilePicker } from "./Profiles";
-
-type RunMode = "tasks" | "lead" | "swarm" | "session";
-const NEW = "__new__";
+import { KEY_HELP } from "@/lib/keys";
 
 const PERMS = [
   { value: "auto", label: "auto", hint: "low-risk approved, risky asks you" },
@@ -58,249 +54,6 @@ export function RosterPicker({ project }: { project: string }) {
         })}
       </div>
     </div>
-  );
-}
-
-export function GoalDialog({ open, onOpenChange, defaultProject }: { open: boolean; onOpenChange: (o: boolean) => void; defaultProject?: string | null }) {
-  const projects = useStore((s) => s.projects);
-  const agents = useStore((s) => s.agents);
-  const loadProjects = useStore((s) => s.loadProjects);
-  const nav = useNavigate();
-  const names = Object.keys(projects);
-  const [project, setProject] = useState<string>(defaultProject && projects[defaultProject] ? defaultProject : names[0] || NEW);
-  const [newName, setNewName] = useState("");
-  const [goal, setGoal] = useState("");
-  const [mode, setMode] = useState<RunMode>("tasks");
-  const [agent, setAgent] = useState("claude_code");
-  const [perm, setPerm] = useState("auto");
-  const [count, setCount] = useState(1);
-  const [profileChoice, setProfileChoice] = useState<string>(NO_PROFILE);
-  const [review, setReview] = useState(false);
-  const [planning, setPlanning] = useState(false);
-  const [plan, setPlan] = useState<{ spec: string; acceptance: string; include: boolean }[] | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const sessionAgents = useMemo(() => {
-    const names = agents.filter((a) => a.alive && (a.capabilities || []).includes("sessions")).map((a) => a.agent_id);
-    const uniq = Array.from(new Set(names.length ? names : ["claude_code"]));
-    uniq.sort((a, b) => (a === "claude_code" ? -1 : b === "claude_code" ? 1 : a.localeCompare(b)));
-    return uniq;
-  }, [agents]);
-
-  useEffect(() => {
-    if (open) {
-      loadProjects();
-      setPlan(null);
-      setPlanning(false);
-      setSubmitting(false);
-      setProfileChoice(NO_PROFILE);
-      if (defaultProject && projects[defaultProject]) setProject(defaultProject);
-    }
-  }, [open]);
-  const [touched, setTouched] = useState(false);
-  useEffect(() => {
-    if (!names.length) setProject(NEW);
-    else if (project === NEW && !touched) setProject(defaultProject && projects[defaultProject] ? defaultProject : names[0]);
-    else if (project !== NEW && !projects[project]) setProject(names[0]);
-  }, [names.length]);
-  useEffect(() => {
-    if (mode === "lead") setAgent("claude_code");
-  }, [mode]);
-
-  const isNew = project === NEW;
-  const nameOk = !isNew || /^[A-Za-z0-9_-]{1,64}$/.test(newName);
-  const canGo = goal.trim().length > 0 && nameOk && !planning && !submitting;
-
-  const resolveProject = async (): Promise<{ name: string; created: boolean } | null> => {
-    if (!isNew) return { name: project, created: false };
-    if (projects[newName]) return { name: newName, created: false };
-    try {
-      const r = await api.createProject(newName);
-      toast.success(`Created project ${r.name} at ${r.repo_path}`);
-      if (profileChoice !== NO_PROFILE) {
-        await api.setProjectSettings(r.name, { profile: profileChoice });
-        api.materialize().catch(() => undefined);
-      }
-      await loadProjects();
-      return { name: r.name, created: true };
-    } catch (e) {
-      toast.error(`couldn't create project: ${String((e as Error).message)}`);
-      return null;
-    }
-  };
-
-  const doPlan = async () => {
-    setPlanning(true);
-    try {
-      const r = await api.plan({ goal, project: isNew ? newName : project, new_repo: isNew });
-      if (r.error || !r.tasks?.length) {
-        toast.warning(`planning failed (${r.error || "no tasks"}); sending the goal as one item`);
-        setPlan([{ spec: goal, acceptance: "", include: true }]);
-      } else {
-        setPlan(r.tasks.map((t) => ({ spec: t.spec, acceptance: t.acceptance || "", include: true })));
-      }
-    } catch (e) {
-      toast.error(String((e as Error).message));
-    } finally {
-      setPlanning(false);
-    }
-  };
-
-  const submit = async () => {
-    if (!canGo) return;
-    if (review && (mode === "tasks" || mode === "swarm") && !plan) {
-      await doPlan();
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const p = await resolveProject();
-      if (!p) return;
-      if (mode === "session") {
-        const r = await api.newSession({ project: p.name, spec: goal, agent, permission_mode: perm, count });
-        toast.success(`Opened ${r.ids.length} session${r.ids.length === 1 ? "" : "s"} on ${agentLabel(agent)}`);
-        onOpenChange(false);
-        if (r.ids.length === 1) nav(`/sessions/${r.ids[0]}`);
-        return;
-      }
-      if (mode === "lead") {
-        const r = await api.newSession({ project: p.name, spec: goal, agent: "claude_code", permission_mode: perm, lead: true });
-        toast.success(`Lead ${r.id.slice(0, 8)} is starting — it plans and dispatches the swarm`);
-        onOpenChange(false);
-        nav(`/sessions/${r.id}`);
-        return;
-      }
-      let items: { spec: string; acceptance: string | null }[];
-      if (plan) {
-        items = plan.filter((x) => x.include && x.spec.trim()).map((x) => ({ spec: x.spec.trim(), acceptance: x.acceptance.trim() || null }));
-        if (!items.length) {
-          toast.warning("no tasks selected");
-          return;
-        }
-      } else {
-        toast("Planning with Claude Code… the agents start as soon as the plan is ready", { duration: 8000 });
-        const r = await api.plan({ goal, project: p.name, new_repo: p.created });
-        items = r.error || !r.tasks?.length ? [{ spec: goal, acceptance: null }] : r.tasks.map((t) => ({ spec: t.spec, acceptance: t.acceptance || null }));
-        if (r.error) toast.warning(`planning failed (${r.error}); sending the goal as one item`);
-        if (p.created && items.length > 1) {
-          items = items.slice(0, 1);
-          toast("new project: one agent builds the first version (parallel agents on an empty repo would clash)");
-        }
-      }
-      let n = 0;
-      for (const it of items) {
-        if (mode === "swarm") {
-          const r = await api.newSession({ project: p.name, spec: it.spec, acceptance: it.acceptance, agent, permission_mode: perm });
-          n += r.ids.length;
-        } else {
-          await api.addTask(p.name, it.spec, it.acceptance);
-          n += 1;
-        }
-      }
-      toast.success(mode === "swarm" ? `Opened ${n} session${n === 1 ? "" : "s"}` : `Enqueued ${n} task${n === 1 ? "" : "s"}`);
-      onOpenChange(false);
-      nav("/");
-    } catch (e) {
-      toast.error(String((e as Error).message));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const showSessionOpts = mode !== "tasks";
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent wide={!!plan}>
-        <DialogHeader title="New goal" description="Say what you want and choose how the swarm runs it." />
-        <DialogBody className="max-h-[70vh] overflow-y-auto">
-          <div className="grid gap-4" onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submit(); }}>
-            <div className="grid grid-cols-[1fr_1fr] gap-3">
-              <div>
-                <Label>Project</Label>
-                <Select value={project} onChange={(v) => { setTouched(true); setProject(v); if (v === NEW) setProfileChoice(NO_PROFILE); }} options={[...names.map((n) => ({ value: n, label: n })), { value: NEW, label: "+ New project…" }]} />
-              </div>
-              {isNew ? (
-                <div>
-                  <Label hint="letters, digits, - and _">Name</Label>
-                  <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="my-app" autoFocus />
-                </div>
-              ) : <div />}
-            </div>
-            <div>
-              <Label hint="⌘⏎ to start">Goal</Label>
-              <Textarea value={goal} onChange={(e) => setGoal(e.target.value)} rows={5} placeholder="Add rate limiting to the API: a token bucket per user, config in settings.toml, tests for the limits" autoFocus={!isNew} />
-            </div>
-            <div>
-              <Label>Run as</Label>
-              <Segmented<RunMode>
-                value={mode}
-                onChange={(m) => { setMode(m); setPlan(null); }}
-                options={[
-                  { value: "tasks", label: "Tasks", hint: "plan it, agents work headless" },
-                  { value: "lead", label: "Lead", hint: "Claude Code commands the swarm; you steer it" },
-                  { value: "swarm", label: "Swarm", hint: "plan it, one live session per subtask" },
-                  { value: "session", label: "Session", hint: "one live session with this prompt" },
-                ]}
-              />
-            </div>
-            {showSessionOpts ? (
-              <div className="grid grid-cols-[1fr_1fr_100px] gap-3">
-                <div>
-                  <Label>Agent</Label>
-                  {profileChoice !== NO_PROFILE ? (
-                    <div className="flex h-8 items-center text-[13px] text-muted">the lead of profile <span className="ml-1 text-fg">{profileChoice}</span></div>
-                  ) : (
-                    <Select value={mode === "lead" ? "claude_code" : agent} onChange={setAgent} options={sessionAgents.map((a) => ({ value: a, label: agentLabel(a) }))} />
-                  )}
-                </div>
-                <div>
-                  <Label>Permissions</Label>
-                  <Select value={perm} onChange={setPerm} options={PERMS} />
-                </div>
-                {mode === "session" ? (
-                  <div>
-                    <Label hint="parallel attempts">Copies</Label>
-                    <Input type="number" min={1} max={12} value={count} onChange={(e) => setCount(Math.max(1, Math.min(12, Number(e.target.value) || 1)))} />
-                  </div>
-                ) : <div />}
-              </div>
-            ) : null}
-            <ProfilePicker project={isNew ? null : project} value={profileChoice} onChange={setProfileChoice} />
-            {!isNew && project && profileChoice === NO_PROFILE ? <RosterPicker project={project} /> : null}
-            {mode === "tasks" || mode === "swarm" ? (
-              <Switch checked={review} onChange={(v) => { setReview(v); if (!v) setPlan(null); }} label="Let me review the plan before anything starts" />
-            ) : null}
-            {planning ? (
-              <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] text-muted">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Planning with Claude Code, 20–60 seconds
-              </div>
-            ) : null}
-            {plan ? (
-              <div className="grid gap-2">
-                <div className="text-[12px] text-muted">{plan.filter((p) => p.include).length} of {plan.length} planned {mode === "swarm" ? "sessions" : "tasks"} selected. Edit inline; untick what you don't want.</div>
-                {plan.map((p, i) => (
-                  <div key={i} className="rounded-md border border-border p-3">
-                    <div className="mb-2 flex items-center justify-between">
-                      <Switch checked={p.include} onChange={(v) => setPlan(plan.map((x, j) => (j === i ? { ...x, include: v } : x)))} label={`#${i + 1}`} />
-                      <Button size="xs" variant="ghost" onClick={() => setPlan(plan.filter((_, j) => j !== i))}><Trash2 className="h-3 w-3" /></Button>
-                    </div>
-                    <Textarea value={p.spec} rows={3} onChange={(e) => setPlan(plan.map((x, j) => (j === i ? { ...x, spec: e.target.value } : x)))} />
-                    <Input className="mono mt-2 text-[12px]" value={p.acceptance} placeholder="acceptance command (blank = soft verify)" onChange={(e) => setPlan(plan.map((x, j) => (j === i ? { ...x, acceptance: e.target.value } : x)))} />
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button variant="primary" disabled={!canGo} onClick={submit}>
-            {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-            {mode === "lead" ? "Start the lead" : mode === "session" ? (count > 1 ? `Open ${count} sessions` : "Open session") : review && !plan ? "Plan" : mode === "swarm" ? "Plan & open sessions" : "Start"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -406,35 +159,15 @@ export function ConfirmDialog({ open, onOpenChange, title, body, confirmLabel = 
 }
 
 
-const KEYS: [string, string][] = [
-  ["g", "new goal"], ["⌘K", "search / jump anywhere"], ["i", "inbox drawer"], ["n", "next thing that needs you"],
-  ["1–7", "switch page (Lead, Swarm, Inbox, Hive, Tasks, Stats, Agents)"], ["?", "this help"],
-];
-const SESSION_KEYS: [string, string][] = [
-  ["y / d", "approve / deny what it is asking"], ["1–9", "pick an option when it asks a question"], ["t", "type a message (esc leaves the box)"],
-  ["F", "finish: commit, push, verify, close the terminal"], ["o", "continue on another agent"], ["c", "cancel (kills it)"],
-  ["click", "the terminal to type straight into the agent — it is the real one"], ["⇧esc", "leave the terminal (plain esc goes to the agent)"],
-  ["select", "copies (also ctrl+shift+c, or ctrl+c while something is selected)"], ["right-click", "pastes (also ctrl+shift+v or shift+insert)"],
-];
-
 export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader title="Keyboard" description="Everything is also clickable; these are the fast paths." />
-        <DialogBody className="grid gap-5 sm:grid-cols-2">
-          <div>
-            <div className="text-label mb-2">Anywhere</div>
-            <div className="grid gap-1.5">
-              {KEYS.map(([k, v]) => (<div key={k} className="flex items-center gap-3 text-[12px]"><kbd className="key min-w-[44px]">{k}</kbd><span className="text-muted">{v}</span></div>))}
-            </div>
-          </div>
-          <div>
-            <div className="text-label mb-2">On a session</div>
-            <div className="grid gap-1.5">
-              {SESSION_KEYS.map(([k, v]) => (<div key={k} className="flex items-center gap-3 text-[12px]"><kbd className="key min-w-[44px]">{k}</kbd><span className="text-muted">{v}</span></div>))}
-            </div>
-          </div>
+      <DialogContent className="max-w-xl" data-help>
+        <DialogHeader title="Keys" description="A workspace is switched with a key or from the Control tab's project list. Every other key goes to the terminal that has the focus." />
+        <DialogBody className="grid gap-1.5">
+          {KEY_HELP.map(([k, v]) => (
+            <div key={k} className="grid grid-cols-[190px_1fr] items-center gap-3 text-[12px]"><span><kbd className="key">{k}</kbd></span><span className="text-muted">{v}</span></div>
+          ))}
         </DialogBody>
       </DialogContent>
     </Dialog>

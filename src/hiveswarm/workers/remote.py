@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -61,6 +62,59 @@ def agent_profile(agent_id: str, acfg: dict[str, Any], session_host: bool) -> di
         log.info("%s: the %s CLI has no effort setting; `effort` is ignored", agent_id, adapter_name)
     return {"caps": caps, "provider": adapter_name, "configured": max(0, int(acfg.get("concurrency", 1))),
             "model": acfg.get("model"), "effort": acfg.get("effort"), "profile": acfg.get("profile") or None}
+
+
+CHAT_PROFILE = "_chat"
+_CHAT_SKIP = {"model", "effort", "concurrency", "enabled", "profile", "timeout"}
+
+
+def chat_agent_id(host: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (host or "").lower()).strip("-")[:40]
+    return f"chat-{slug}" if slug else "chat"
+
+
+def chat_acfg(cfg: dict[str, Any]) -> dict[str, Any]:
+    """How this machine runs its chat agent: Claude Code with the sign-in and settings of the machine's own
+    `[agents.claude_code]` table (or the first table on that adapter), overridden by an optional `[chat]` table.
+    The model and effort are not here: they are one setting on the hub and come with each chat session."""
+    agents = cfg.get("agents") or {}
+    base: dict[str, Any] = {}
+    t = agents.get("claude_code")
+    if isinstance(t, dict) and t.get("adapter", "claude_code") == "claude_code" and not t.get("profile"):
+        base = t
+    else:
+        for name, t in agents.items():
+            if isinstance(t, dict) and t.get("adapter", name) == "claude_code" and not t.get("profile"):
+                base = t
+                break
+    out = {k: v for k, v in base.items() if k not in _CHAT_SKIP and not isinstance(v, dict)}
+    out.update({k: v for k, v in (cfg.get("chat") or {}).items() if k not in _CHAT_SKIP})
+    out["adapter"] = "claude_code"
+    return out
+
+
+def implicit_agents(cfg: dict[str, Any], host: str, session_host: bool) -> dict[str, dict[str, Any]]:
+    """Agents a worker serves without a table in worker.toml. There is one: the chat agent, on a worker that has tmux
+    and serves Claude Code (an enabled table on that adapter, or no tables at all), unless `[chat] enabled = false`;
+    `[chat] enabled = true` asks for it without such a table. A second worker on the same machine that runs other
+    agents therefore does not claim the machine's chat agent. The hub sets how many lanes it runs (one per chat
+    agent that is open, plus a spare)."""
+    out: dict[str, dict[str, Any]] = {}
+    agents = cfg.get("agents") or {}
+    enabled = (cfg.get("chat") or {}).get("enabled")
+    serves_claude = not agents or any(isinstance(a, dict) and a.get("adapter", n) == "claude_code" and a.get("enabled", True) is not False
+                                      for n, a in agents.items())
+    if session_host and enabled is not False and (serves_claude or enabled is True) and shutil.which("claude"):
+        out[chat_agent_id(host)] = {"caps": ["sessions", "chat"], "provider": "claude_code", "configured": 2,
+                                    "model": None, "effort": None, "profile": CHAT_PROFILE}
+    return out
+
+
+def agent_cfg(cfg: dict[str, Any], agent_id: str) -> dict[str, Any]:
+    acfg = (cfg.get("agents") or {}).get(agent_id)
+    if acfg is None and agent_id == chat_agent_id(socket.gethostname()):
+        return chat_acfg(cfg)
+    return acfg or {}
 
 
 class Client:
@@ -226,7 +280,7 @@ def run_session_task(client: Client, cfg: dict[str, Any], agent_id: str, claim: 
     root = Path(os.path.expanduser(cfg.get("root", "~/.hiveswarm"))).resolve()
     hub_ssh = cfg.get("hub_ssh") or cfg.get("spark_ssh") or claim.get("hub_ssh") or claim.get("spark_ssh") or ""
     remote = f"{hub_ssh}:{task['repo_path']}" if hub_ssh else task["repo_path"]
-    acfg = (cfg.get("agents") or {}).get(agent_id, {})
+    acfg = agent_cfg(cfg, agent_id)
     if SESSION_HOST is None:
         client.post("/complete", {"task_id": task["id"], "attempt_id": aid, "outcome": "error",
                                   "log": "this worker has no tmux; interactive sessions need tmux installed"})
@@ -238,6 +292,28 @@ def run_session_task(client: Client, cfg: dict[str, Any], agent_id: str, claim: 
     hb = threading.Thread(target=_heartbeat_loop, args=(client, agent_id, task["id"], stop, cancel), daemon=True)
     hb.start()
     live_ref: dict[str, Any] = {}
+    if sess.get("role") == "chat":
+        # A chat agent has no repository: it runs in a directory of its own (kept, so `claude --resume` finds the
+        # conversation again) and ends without a branch.
+        home = chat_dir(root, task["id"])
+        try:
+            home.mkdir(parents=True, exist_ok=True)
+            acfg = {**acfg, "model": sess.get("model"), "effort": sess.get("effort")}
+            log.info("chat %s: starting on %s", task["id"], agent_id)
+            outcome = SESSION_HOST.run_session(agent_id, acfg, task, sess, aid, home, home, ship, cancel)
+            log.info("chat %s: %s", task["id"], outcome)
+            _end_session(client, task, aid, agent_id, outcome, home, home, ship, SESSION_HOST.last_window())
+        except Exception as e:
+            log.error("chat %s: crashed: %s", task["id"], e)
+            ship.emit("status", f"session host crashed: {e}")
+            try:
+                client.post("/complete", {"task_id": task["id"], "attempt_id": aid, "outcome": "error", "log": str(e)[:2000]})
+            except Exception:
+                pass
+        finally:
+            stop.set()
+            ship.close()
+        return
     try:
         with _mirror_lock(task["project"]):
             mirror = _ensure_mirror(root, task["project"], remote)
@@ -251,7 +327,7 @@ def run_session_task(client: Client, cfg: dict[str, Any], agent_id: str, claim: 
             watch_stop.set()
         live_ref["win"] = (sess.get("tmux") or "")
         log.info("session %s: %s -> %s", task["id"], agent_id, outcome)
-        _end_session(client, task, aid, agent_id, outcome, mirror, wt, ship)
+        _end_session(client, task, aid, agent_id, outcome, mirror, wt, ship, SESSION_HOST.last_window())
     except Exception as e:
         log.error("session %s: crashed: %s", task["id"], e)
         ship.emit("status", f"session host crashed: {e}")
@@ -265,16 +341,47 @@ def run_session_task(client: Client, cfg: dict[str, Any], agent_id: str, claim: 
         ship.close()
 
 
+def chat_dir(root: Path, tid: str) -> Path:
+    """Where a chat agent runs. It sits beside the task worktrees so a `sandbox_wrapper`, which only lets agents
+    run under `worktrees/`, accepts it; the name cannot collide with a task id."""
+    return root / "worktrees" / f"chat-{tid}"
+
+
 def _end_session(client: Client, task: dict[str, Any], aid: str, agent_id: str, outcome: str,
-                 mirror: Path, wt: Path, ship: LogShipper) -> None:
+                 mirror: Path, wt: Path, ship: LogShipper, own_win: str | None = None) -> None:
+    """Report how a session ended and close its window. `own_win` is the window this lane ran it in; the one on the
+    hub's record is used only when that is unknown, because a session reopened in the meantime has a new one there."""
     win = None
     lead = False
+    chat = False
+    home = False
     try:
-        sess_now = client.get(f"/sessions/{task['id']}")["session"] or {}
+        got = client.get(f"/sessions/{task['id']}")
+        sess_now = got["session"] or {}
         win = sess_now.get("tmux")
         lead = bool(sess_now.get("lead"))
+        chat = sess_now.get("role") == "chat"
+        home = (got.get("task") or {}).get("project") == "_home"
     except Exception:
-        pass
+        chat = _session_of(task).get("role") == "chat"
+    if own_win:
+        win = own_win
+    if chat:
+        # No branch and no verdict. A Home chat that was closed leaves nothing; a project's keeps its directory so
+        # it can be reopened with its conversation.
+        ship.emit("status", "chat agent closed" if outcome != "exited" else "chat agent exited with an error")
+        ship.close()
+        if outcome != "cancelled":
+            try:
+                client.post("/complete", {"task_id": task["id"], "attempt_id": aid, "outcome": "error" if outcome == "exited" else "pass",
+                                          "log": "Claude Code exited with a non-zero code" if outcome == "exited" else "chat agent closed"})
+            except Exception as e:
+                log.warning("chat %s: could not report the end: %s", task["id"], e)
+        if win:
+            kill_window(win)
+        if home and outcome == "cancelled":
+            shutil.rmtree(wt, ignore_errors=True)
+        return
     if outcome == "cancelled":
         ship.emit("status", "stopped (cancelled)")
         ship.close()
@@ -431,6 +538,8 @@ def _adopt_sessions(client: Client, cfg: dict[str, Any], root: Path, host: str) 
             continue
         mirror = root / "mirrors" / r["project"]
         wt = root / "worktrees" / tid
+        if sess.get("role") == "chat":
+            mirror = wt = chat_dir(root, tid)
         agent = sess.get("agent") or r.get("claimed_by") or "agent"
         aid = ""
         try:
@@ -449,7 +558,7 @@ def _adopt_sessions(client: Client, cfg: dict[str, Any], root: Path, host: str) 
             hb.start()
             try:
                 outcome = SESSION_HOST.adopt(task, sess, str(wt), str(mirror), ship, cancel)
-                _end_session(client, task, aid, agent, outcome, mirror, wt, ship)
+                _end_session(client, task, aid, agent, outcome, mirror, wt, ship, SESSION_HOST.last_window())
             finally:
                 stop.set()
                 ship.close()
@@ -550,11 +659,15 @@ class LaneManager:
             self.cfg["agents"].clear()
             self.cfg["agents"].update(new_agents)
             self.cfg["_mtime"] = fresh.get("_mtime")
+        with self.lock:
+            self.cfg["chat"] = fresh.get("chat") or {}
         want: dict[str, dict[str, Any]] = {}
         for aid, acfg in new_agents.items():
             prof = agent_profile(aid, acfg, SESSION_HOST is not None)
             if prof:
                 want[aid] = prof
+        for aid, prof in implicit_agents(self.cfg, self.host, SESSION_HOST is not None).items():
+            want.setdefault(aid, prof)
         for aid in list(self.meta):
             if aid not in want:
                 self.set_target(aid, 0)
@@ -700,11 +813,12 @@ def main() -> None:
         log.warning("tmux not found; interactive sessions disabled on this machine (install tmux)")
 
     wanted = a.agent or list((cfg.get("agents") or {}).keys()) or list(adapters.ADAPTERS.keys())
+    implicit = {} if (a.agent or a.once) else implicit_agents(cfg, host, SESSION_HOST is not None)
     serving: list[str] = []
     manager = LaneManager(client, cfg, host, poll, a.once)
-    for agent_id in wanted:
+    for agent_id in [*wanted, *(i for i in implicit if i not in wanted)]:
         acfg = (cfg.get("agents") or {}).get(agent_id, {})
-        prof = agent_profile(agent_id, acfg, SESSION_HOST is not None)
+        prof = implicit[agent_id] if (agent_id in implicit and agent_id not in (cfg.get("agents") or {})) else agent_profile(agent_id, acfg, SESSION_HOST is not None)
         if prof is None:
             continue
         caps, adapter_name, cap = prof["caps"], prof["provider"], prof["configured"]

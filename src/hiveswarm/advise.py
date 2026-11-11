@@ -98,6 +98,8 @@ def _lanes() -> dict[str, dict[str, Any]]:
     for a in db.agents_alive():
         aid = a["agent_id"]
         capabilities = json.loads(a["capabilities"] or "[]")
+        if "chat" in capabilities:  # the chat agent's lanes are not lanes for work
+            continue
         cap = int(caps.get(aid, 1))
         b = int(busy.get(aid, 0))
         out[aid] = {"capacity": cap, "busy": b, "free": max(0, cap - b), "sessions": "sessions" in capabilities,

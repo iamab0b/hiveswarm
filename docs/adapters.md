@@ -61,7 +61,7 @@ my_agent.binary = "my-agent"                          # the executable whose pre
 my_agent.session_argv = lambda cfg, prompt, mode: ["my-agent", "--interactive", prompt]
 ```
 
-`session_argv` is used for interactive sessions in the app's terminal (`hm session`, the Lead page). Without it a
+`session_argv` is used for interactive sessions in the app's terminals (`hm session`, a project's lead and the agents it starts). Without it a
 session runs `<binary> <prompt>` and relies on the generic screen monitor to spot permission prompts. `mode` is
 `"auto"`, `"acceptEdits"` or `"bypass"`.
 

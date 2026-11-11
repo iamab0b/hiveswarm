@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { Agent, FeedEntry, InboxItem, LocalInfo, Project, Summary, Task } from "./types";
 import { toast } from "sonner";
 import { api } from "./api";
-import { firstLine, isTerminal, liveAttention, sessionOf } from "./utils";
+import { HOME, firstLine, isTerminal, liveAttention, roleOf, sessionOf } from "./utils";
 
 const FEED_MAX = 6000;
 const PER_TASK_MAX = 2500;
@@ -34,7 +34,14 @@ interface State {
   theme: "dark" | "light";
   seenAttention: Set<string>;
   bootstrapped: boolean;
+  /** the task whose details are open over the workspace, and the tab to show */
+  detail: { id: string; tab?: string } | null;
+  /** the chat agent at Home (the one that belongs to no project) */
+  homeChat: string | null;
 
+  openDetail: (id: string, tab?: string) => void;
+  closeDetail: () => void;
+  setHomeChat: (id: string | null) => void;
   start: () => void;
   loadProjects: () => Promise<void>;
   setTheme: (t: "dark" | "light") => void;
@@ -80,6 +87,12 @@ export const useStore = create<State>((set, get) => ({
   theme: (localStorage.getItem("hm.theme") as "dark" | "light") || "dark",
   seenAttention: new Set(),
   bootstrapped: false,
+  detail: null,
+  homeChat: null,
+
+  openDetail: (id, tab) => set({ detail: { id, tab } }),
+  closeDetail: () => set({ detail: null }),
+  setHomeChat: (id) => set({ homeChat: id }),
 
   setTheme: (t) => {
     localStorage.setItem("hm.theme", t);
@@ -114,6 +127,8 @@ export const useStore = create<State>((set, get) => ({
     }).catch(() => undefined);
     get().loadProjects();
     api.agents().then((agents) => set({ agents })).catch(() => undefined);
+    // Projects change outside the event stream (the chat agent starts one, a pause, a profile): keep them fresh.
+    setInterval(() => { if (!document.hidden) get().loadProjects(); }, 10000);
 
     // A hidden tab drops its event stream (and with it the polling behind it) and reconnects when it is shown again.
     document.addEventListener("visibilitychange", () => {
@@ -143,12 +158,13 @@ export const useStore = create<State>((set, get) => ({
         if (prev.bootstrapped) {
           for (const t of d.tasks) {
             const was = prev.taskById[t.id];
+            if (t.project === HOME || roleOf(t) === "chat") continue;  // a chat agent opening or closing is not news
             if (was && was.state !== t.state && isTerminal(t.state)) {
               notices.push({
                 id: `${t.id}-${t.state}-${t.updated_at}`,
                 kind: t.state,
                 title: t.state === "done" ? "Done" : t.state === "failed" ? "Failed" : "Cancelled",
-                body: `${t.id.slice(0, 8)} · ${firstLine(t.spec, 60)}`,
+                body: `${t.project} · ${firstLine(t.spec, 60)}`,
                 taskId: t.id,
                 ts: Date.now(),
               });
@@ -163,7 +179,7 @@ export const useStore = create<State>((set, get) => ({
                 id: key,
                 kind: it.attention.kind,
                 title: it.attention.kind === "permission" ? "Needs approval" : it.attention.kind === "question" ? "Asks you" : "Usage limit",
-                body: `${it.agent || ""} ${it.id.slice(0, 8)} · ${firstLine(it.attention.summary, 80)}`,
+                body: `${it.project === HOME ? "Home" : it.project} · ${firstLine(it.attention.summary, 80)}`,
                 taskId: it.id,
                 ts: Date.now(),
               });
@@ -183,8 +199,9 @@ export const useStore = create<State>((set, get) => ({
         } else {
           for (const it of d.inbox) seen.add(`${it.id}:${it.attention.kind}:${it.attention.since || 0}`);
         }
-        const inboxCount = d.inbox.length;
+        const inboxCount = d.inbox.filter((i) => i.attention.kind !== "input").length;
         document.title = inboxCount ? `(${inboxCount}) Hiveswarm` : "Hiveswarm";
+        if (d.tasks.some((t) => t.project !== HOME && !(t.project in prev.projects))) get().loadProjects();
         set({
           summary: d.summary,
           tasks: d.tasks,

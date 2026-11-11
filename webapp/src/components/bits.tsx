@@ -1,6 +1,6 @@
 import * as React from "react";
-import { Link } from "react-router-dom";
 import { Crown, TerminalSquare, Timer } from "lucide-react";
+import { useStore } from "@/lib/store";
 import { agentColor, agentLabel, cn, elapsed, openStep, sessionOf } from "@/lib/utils";
 import type { AgentStatus, FeedEntry, Task } from "@/lib/types";
 import { Badge, type Tone } from "./ui/badge";
@@ -32,13 +32,14 @@ export function Mono({ children, className }: { children: React.ReactNode; class
   return <span className={cn("mono", className)}>{children}</span>;
 }
 
-export function Id({ id, to, n = 8, className }: { id: string; to?: string; n?: number; className?: string }) {
-  const el = <span className={cn("mono text-muted", className)}>{id.slice(0, n)}</span>;
-  return to ? <Link to={to} className="hover:text-fg">{el}</Link> : el;
-}
-
-export function taskHref(t: Task): string {
-  return t.kind === "session" ? `/sessions/${t.id}` : `/tasks/${t.id}`;
+/** A task's short id that opens its record over whatever is on screen. */
+export function TaskLink({ id, tab, n = 8, className, children }: { id: string; tab?: string; n?: number; className?: string; children?: React.ReactNode }) {
+  const openDetail = useStore((s) => s.openDetail);
+  return (
+    <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(id, tab); }} className={cn(children ? "" : "mono text-muted hover:text-fg hover:underline", className)}>
+      {children ?? id.slice(0, n)}
+    </button>
+  );
 }
 
 /** Title row of a page: title, optional count and subtitle, actions on the right. No icon. */

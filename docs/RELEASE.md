@@ -19,7 +19,7 @@
 `.github/workflows/release.yml` runs on every `v*` tag: it builds the wheel, then Hiveswarm Desktop for Windows (NSIS installer + portable), Linux (AppImage + deb) and macOS (dmg for Apple silicon and Intel, unsigned) with the wheel bundled, and creates the GitHub Release with them plus `SHA256SUMS.txt` and generated notes. If one platform fails, the release still publishes the others and its notes say which one is missing. CI's `desktop-package` job builds all three platforms on every push, so a packaging problem shows up before a tag.
 
 ```bash
-git tag -a v0.2.0 -m "Hiveswarm 0.2.0" && git push origin v0.2.0
+git tag -a v0.4.0 -m "Hiveswarm 0.4.0" && git push origin v0.4.0
 ```
 
 Then check the release page, download the installer for your own machine and go through a first run. `workflow_dispatch` produces a draft release for a dry run.
@@ -32,11 +32,12 @@ Signing: macOS builds are unsigned (users right-click → Open once); Windows bu
 - 0.2.0 (2026-10-01): design system, live lane counts, the Craft ruleset, agent profiles and rosters, the advisor, memory.
 - 0.2.1 (2026-10-01): one lane count per agent, hub lanes on the Agents page, the model picker.
 - 0.3.0 (2026-10-09): profiles — which models lead, chat and code for a project, fixed once it starts. 0.3.1 (2026-10-09): the app shows the upgraded page without a manual reload.
+- 0.4.0 (2026-11-11): the app is terminals — a chat agent on launch, a workspace of tiles per project, one Control tab; the headless advisor and the six pages are gone.
 
-## After 0.2
+## After 0.4
 
-- 0.3.x: bug fixes from first users of profiles and the advisor; no interface changes.
-- 0.4: the daemon HTTP API gets a version prefix; worker config validated with a schema and `hm doctor`; macOS worker support tested in CI; Letta Code as an adapter.
+- 0.4.x: bug fixes from first use of the terminal-first app; no interface changes.
+- 0.5: handler agents the lead can spawn to watch a group of lanes; the daemon HTTP API gets a version prefix; worker config validated with a schema and `hm doctor`; macOS worker support tested in CI.
 - Adapter contract and MCP tool set are frozen at 1.0.
 
 ## Announcing

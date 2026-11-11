@@ -100,8 +100,8 @@ work so its numbers can recover. Do the same when you pick:
 
 ## Profiles
 
-When the advice names a `profile`, the human fixed which models work on this project: the lead (you), the advisor
-and the coders, each with a lane count. Only the profile's coders take the project's tasks, so pick among them and
+When the advice names a `profile`, the human fixed which models work on this project: the lead (you) and the
+coders, each with a lane count. Only the profile's coders take the project's tasks, so pick among them and
 do not name agents outside it; the human changes lane counts, not you. The advice's summary shows the profile.
 
 ## Waves and lanes
